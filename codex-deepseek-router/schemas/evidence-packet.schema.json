@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/codex-deepseek-router/codex-deepseek-router/schemas/evidence-packet.schema.json",
+  "title": "EvidencePacket",
+  "description": "Evidence collected by deepseek_flash, passed to deepseek_pro on ESCALATE_TO_PRO.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "summary",
+    "relevant_files",
+    "observations",
+    "hypotheses",
+    "eliminated",
+    "open_questions",
+    "recommended_next_step"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relevant_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "eliminated": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommended_next_step": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

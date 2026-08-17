@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "summary": "Lease renewal and settlement race narrowed to two candidate paths.",
+  "relevant_files": ["src/lease/renew.rs", "src/settlement/settle.rs"],
+  "observations": [
+    "renew and settle both read lease state without a shared lock",
+    "settle emits a second settlement event when state is stale"
+  ],
+  "hypotheses": [
+    "renew window overlaps settlement commit",
+    "event replay duplicates settlement"
+  ],
+  "eliminated": ["clock skew between replicas"],
+  "open_questions": ["whether the lock is re-entrant across modules"],
+  "recommended_next_step": "Trace the lock ordering between renew and settle in a Pro DEEP pass."
+}

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "source_type": "screenshot",
+  "user_goal": "Fix the header alignment.",
+  "observations": [
+    "viewport approximately 1440 px",
+    "sidebar approximately 240 px",
+    "save button is right aligned",
+    "second card begins lower than first card"
+  ],
+  "visible_text": ["Patients", "Save"],
+  "relationships": ["button center aligns with title vertically"],
+  "uncertainties": [
+    "exact margin cannot be determined",
+    "font family cannot be confirmed"
+  ],
+  "source_visibility": "parent_only"
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/codex-deepseek-router/codex-deepseek-router/schemas/assignment-envelope.schema.json",
+  "title": "AssignmentEnvelope",
+  "description": "A one-shot plaintext task handoff staged by the Codex parent for a DeepSeek child agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "handoff_id",
+    "agent_type",
+    "created_at",
+    "expires_at",
+    "assignment",
+    "policy",
+    "modality"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "handoff_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "agent_type": {
+      "enum": ["deepseek_flash", "deepseek_pro"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "assignment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000000
+    },
+    "policy": {
+      "enum": ["FAST", "REACT", "SPEC", "DEEP"]
+    },
+    "modality": {
+      "enum": ["TEXT_ONLY", "VISION_TRANSLATABLE", "VISION_CRITICAL"]
+    },
+    "visual_context": {
+      "$ref": "visual-context.schema.json"
+    },
+    "evidence_packet": {
+      "$ref": "evidence-packet.schema.json"
+    }
+  }
+}

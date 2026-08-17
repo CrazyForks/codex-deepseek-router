@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local tooling
+.idea/
+.vscode/
+*.swp
+
+# Never commit credentials or handoff state
+*.pending.json
+*.claimed.*.json
+*.failed.*.json
+*.lock
