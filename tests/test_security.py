@@ -61,15 +61,32 @@ def test_status_never_contains_key(paths, fake_codex, no_credentials, monkeypatc
 
 def test_smoke_failure_payloads_never_contain_key(paths, monkeypatch):
     secret = "sk-test-secret"
+    monkeypatch.setattr(manager, "platform_name", lambda: "linux")
+    monkeypatch.setattr(manager, "credential_backend", lambda: None)
     monkeypatch.setattr(manager, "read_credential_key", lambda: secret)
     env = manager._smoke_env(paths)
-    # The key reaches the child environment by design...
+    # Env-key platforms pass the value to the child process by design...
     assert env.get(manager.API_KEY_ENV) == secret
     # ...but never travels through JSON payloads.
     with pytest.raises(Exception) as exc:
         manager.native_spawn_smoke(paths, "/nonexistent/codex", "deepseek_flash", "deepseek-v4-flash")
     details = getattr(exc.value, "details", None) or {}
     assert secret not in json.dumps({"code": getattr(exc.value, "code", None), "details": details})
+
+
+def test_macos_smoke_env_does_not_redundantly_decrypt_key(paths, monkeypatch):
+    monkeypatch.delenv(manager.API_KEY_ENV, raising=False)
+    monkeypatch.setattr(manager, "platform_name", lambda: "macos")
+    monkeypatch.setattr(manager, "credential_backend", lambda: "macos-keychain")
+
+    def fail_if_read():
+        pytest.fail("macOS provider auth must own the only credential read")
+
+    monkeypatch.setattr(manager, "read_credential_key", fail_if_read)
+
+    env = manager._smoke_env(paths)
+
+    assert manager.API_KEY_ENV not in env
 
 
 def test_manifest_never_contains_key(paths, fake_codex, no_credentials, monkeypatch):

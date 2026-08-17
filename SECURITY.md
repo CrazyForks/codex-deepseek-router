@@ -13,7 +13,8 @@ parent. See
 ## Credential handling
 
 - macOS: Keychain generic password
-  (`io.github.codex-deepseek-router.deepseek-api-key`).
+  (`io.github.codex-deepseek-router.deepseek-api-key`), read/written through
+  Security.framework by the same Python identity; status checks metadata only.
 - Windows: Credential Manager (same target); agent TOMLs use the
   `DEEPSEEK_API_KEY` environment variable because command-backed credential
   lookup fails under the Desktop sandbox identity (see
@@ -22,7 +23,9 @@ parent. See
 
 Keys are accepted only via `--api-key-stdin`. They never appear in argv,
 config files, JSON/TOML artifacts, temp files, debug logs, test fixtures,
-stdout, or exception messages. `status`/`doctor` report presence only.
+user-facing command output, or exception messages. The private macOS
+`_credential-get` helper writes the key only to Codex's captured provider-auth
+pipe; `status`/`doctor` report presence only.
 
 ## Plaintext handoff
 

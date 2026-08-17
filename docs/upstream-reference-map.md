@@ -22,7 +22,7 @@ target file in this project → adaptation required.
 | backup / rollback | oil-oil | same | `make_backup`, `restore_backup` | same target | tracked set now covers 2 agents + hooks.json + runtime skill |
 | process lock | oil-oil | same | `operation_lock`, `try_acquire_file_lock` | same target | unchanged (fcntl / msvcrt) |
 | manifest | oil-oil | same | `write_manifest`, `read_manifest` | same target | no `selected_model`, no forced V1 |
-| macOS Keychain | oil-oil | same | `_macos_read_credential` etc. | same target | read/delete via `security` CLI; **write via Security.framework SecItemAdd (ctypes) so the secret never enters argv**; credential target renamed to `io.github.codex-deepseek-router.deepseek-api-key` |
+| macOS Keychain | oil-oil | same | `_macos_read_credential` etc. | same target | read/write/delete via Security.framework in the same Python identity; status uses a metadata-only query; secret never enters argv; target renamed to `io.github.codex-deepseek-router.deepseek-api-key` |
 | Windows Credential Manager | oil-oil | same | `_windows_credential_api` etc. | same target | target renamed (see above) |
 | runtime discovery | oil-oil | same | `find_desktop_codex`, `codex_version_text` | same target | unchanged |
 | static status | oil-oil | same | `static_status` | same target | restructured for two agents + hook trust |
@@ -55,7 +55,7 @@ target file in this project → adaptation required.
 |---|---|---|---|---|---|
 | self-contained provider in agent TOML | Utopia-V | `agents/v4-flash-worker.toml` | `[model_providers.deepseek]` | `codex-deepseek-router/agents/*.toml` | two agents; **Flash kept read-only and its routing contract dropped implementation tasks (proposals as text)**; macOS generated variant uses Keychain command auth |
 | env_key portable auth | Utopia-V | same | `env_key = "DEEPSEEK_API_KEY"` | same target | default on Windows/Linux |
-| Keychain command auth | Utopia-V | `agents/macos-keychain/v4-flash-worker.toml` | `[model_providers.deepseek.auth]` | manager-generated macOS variant | `security` CLI with renamed credential target |
+| Keychain command auth | Utopia-V | `agents/macos-keychain/v4-flash-worker.toml` | `[model_providers.deepseek.auth]` | manager-generated macOS variant | exact setup Python executable runs the manager's private `_credential-get` helper, preserving Keychain caller identity |
 
 ## New in this project (no upstream source)
 

@@ -497,7 +497,7 @@ def credential_account() -> str:
 
 def credential_backend() -> Optional[str]:
     platform = platform_name()
-    if platform == "macos" and Path("/usr/bin/security").is_file():
+    if platform == "macos":
         return "macos-keychain"
     if platform == "windows":
         return "windows-credential-manager"
@@ -508,38 +508,31 @@ def credential_present() -> bool:
     if os.environ.get(API_KEY_ENV):
         return True
     backend = credential_backend()
-    if backend is None:
+    try:
+        if backend == "macos-keychain":
+            return _macos_credential_exists()
+        if backend == "windows-credential-manager":
+            return _windows_read_credential() is not None
         # Linux V1: environment variable only.
         return False
-    try:
-        return read_credential_key() is not None
     except ManagerError:
         return False
 
 
 def _macos_read_credential() -> Optional[str]:
-    proc = subprocess.run(
-        [
-            "/usr/bin/security",
-            "find-generic-password",
-            "-a",
-            credential_account(),
-            "-s",
-            CREDENTIAL_TARGET,
-            "-w",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    if proc.returncode != 0:
-        return None
-    return proc.stdout.strip() or None
+    value = _macos_copy_credential(return_data=True)
+    return value if isinstance(value, str) else None
+
+
+def _macos_credential_exists() -> bool:
+    """Check for the item without asking Keychain to decrypt its value."""
+    return _macos_copy_credential(return_data=False) is True
 
 
 _K_CF_STRING_ENCODING_UTF8 = 0x08000100
 _ERR_SEC_SUCCESS = 0
 _ERR_SEC_DUPLICATE_ITEM = -25299
+_ERR_SEC_ITEM_NOT_FOUND = -25300
 
 
 def _macos_security_framework():
@@ -556,6 +549,8 @@ def _macos_security_framework():
 
     security.SecItemAdd.argtypes = [c_void_p, ctypes.POINTER(c_void_p)]
     security.SecItemAdd.restype = ctypes.c_int32
+    security.SecItemCopyMatching.argtypes = [c_void_p, ctypes.POINTER(c_void_p)]
+    security.SecItemCopyMatching.restype = ctypes.c_int32
     security.SecItemUpdate.argtypes = [c_void_p, c_void_p]
     security.SecItemUpdate.restype = ctypes.c_int32
     security.SecItemDelete.argtypes = [c_void_p]
@@ -574,6 +569,10 @@ def _macos_security_framework():
         c_void_p,
     ]
     core_foundation.CFDictionaryCreate.restype = c_void_p
+    core_foundation.CFDataGetLength.argtypes = [c_void_p]
+    core_foundation.CFDataGetLength.restype = ctypes.c_long
+    core_foundation.CFDataGetBytePtr.argtypes = [c_void_p]
+    core_foundation.CFDataGetBytePtr.restype = c_void_p
     core_foundation.CFRelease.argtypes = [c_void_p]
     core_foundation.CFRelease.restype = None
     return security, core_foundation, ctypes
@@ -597,9 +596,90 @@ def _macos_security_constants(security, core_foundation, ctypes) -> Dict[str, in
         "service": exported_pointer(security, "kSecAttrService"),
         "account": exported_pointer(security, "kSecAttrAccount"),
         "value_data": exported_pointer(security, "kSecValueData"),
+        "return_data": exported_pointer(security, "kSecReturnData"),
+        "true": exported_pointer(core_foundation, "kCFBooleanTrue"),
         "key_callbacks": exported_struct(core_foundation, "kCFTypeDictionaryKeyCallBacks"),
         "value_callbacks": exported_struct(core_foundation, "kCFTypeDictionaryValueCallBacks"),
     }
+
+
+def _macos_copy_credential(return_data: bool):
+    """Query Keychain through the same Python identity that creates the item."""
+    try:
+        security, cf, ctypes = _macos_security_framework()
+        constants = _macos_security_constants(security, cf, ctypes)
+    except (OSError, ValueError) as exc:
+        raise ManagerError(
+            "credential_read_failed",
+            f"Could not load Security.framework: {exc}",
+        ) from exc
+
+    def cf_string(value: str):
+        return cf.CFStringCreateWithCString(
+            None, value.encode("utf-8"), _K_CF_STRING_ENCODING_UTF8
+        )
+
+    def dictionary(entries):
+        keys = (ctypes.c_void_p * len(entries))(*[key for key, _ in entries])
+        values = (ctypes.c_void_p * len(entries))(*[value for _, value in entries])
+        return cf.CFDictionaryCreate(
+            None,
+            keys,
+            values,
+            len(entries),
+            constants["key_callbacks"],
+            constants["value_callbacks"],
+        )
+
+    with ExitStack() as cleanup:
+        def owned(ref, label: str):
+            if not ref:
+                raise ManagerError(
+                    "credential_read_failed",
+                    f"CoreFoundation could not allocate {label}.",
+                )
+            cleanup.callback(cf.CFRelease, ref)
+            return ref
+
+        target_ref = owned(cf_string(CREDENTIAL_TARGET), "the Keychain service string")
+        user_ref = owned(cf_string(credential_account()), "the Keychain account string")
+        entries = [
+            (constants["class"], constants["generic_password"]),
+            (constants["service"], target_ref),
+            (constants["account"], user_ref),
+        ]
+        if return_data:
+            entries.append((constants["return_data"], constants["true"]))
+        query = owned(dictionary(entries), "the Keychain query")
+        result_ref = ctypes.c_void_p()
+        status = security.SecItemCopyMatching(
+            query,
+            ctypes.byref(result_ref) if return_data else None,
+        )
+        if status == _ERR_SEC_ITEM_NOT_FOUND:
+            return None if return_data else False
+        if status != _ERR_SEC_SUCCESS:
+            raise ManagerError(
+                "credential_read_failed",
+                f"Keychain credential query failed (status {status}).",
+            )
+        if not return_data:
+            return True
+        data_ref = owned(result_ref.value, "the Keychain credential data")
+        length = cf.CFDataGetLength(data_ref)
+        pointer = cf.CFDataGetBytePtr(data_ref)
+        if length < 0 or (length and not pointer):
+            raise ManagerError(
+                "credential_read_failed",
+                "Keychain returned invalid credential data.",
+            )
+        try:
+            return ctypes.string_at(pointer, length).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ManagerError(
+                "credential_read_failed",
+                "Keychain credential data was not valid UTF-8.",
+            ) from exc
 
 
 def _macos_store_credential(secret: str) -> None:
@@ -681,12 +761,64 @@ def _macos_store_credential(secret: str) -> None:
 
 
 def _macos_remove_credential() -> bool:
-    proc = subprocess.run(
-        ["/usr/bin/security", "delete-generic-password", "-a", credential_account(), "-s", CREDENTIAL_TARGET],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return proc.returncode == 0
+    try:
+        security, cf, ctypes = _macos_security_framework()
+        constants = _macos_security_constants(security, cf, ctypes)
+    except (OSError, ValueError) as exc:
+        raise ManagerError(
+            "credential_delete_failed",
+            f"Could not load Security.framework: {exc}",
+        ) from exc
+
+    def cf_string(value: str):
+        return cf.CFStringCreateWithCString(
+            None, value.encode("utf-8"), _K_CF_STRING_ENCODING_UTF8
+        )
+
+    with ExitStack() as cleanup:
+        target_ref = cf_string(CREDENTIAL_TARGET)
+        user_ref = cf_string(credential_account())
+        if not target_ref or not user_ref:
+            if target_ref:
+                cf.CFRelease(target_ref)
+            if user_ref:
+                cf.CFRelease(user_ref)
+            raise ManagerError(
+                "credential_delete_failed",
+                "CoreFoundation could not allocate the Keychain query strings.",
+            )
+        cleanup.callback(cf.CFRelease, target_ref)
+        cleanup.callback(cf.CFRelease, user_ref)
+        entries = [
+            (constants["class"], constants["generic_password"]),
+            (constants["service"], target_ref),
+            (constants["account"], user_ref),
+        ]
+        keys = (ctypes.c_void_p * len(entries))(*[key for key, _ in entries])
+        values = (ctypes.c_void_p * len(entries))(*[value for _, value in entries])
+        query = cf.CFDictionaryCreate(
+            None,
+            keys,
+            values,
+            len(entries),
+            constants["key_callbacks"],
+            constants["value_callbacks"],
+        )
+        if not query:
+            raise ManagerError(
+                "credential_delete_failed",
+                "CoreFoundation could not allocate the Keychain delete query.",
+            )
+        cleanup.callback(cf.CFRelease, query)
+        status = security.SecItemDelete(query)
+        if status == _ERR_SEC_ITEM_NOT_FOUND:
+            return False
+        if status != _ERR_SEC_SUCCESS:
+            raise ManagerError(
+                "credential_delete_failed",
+                f"Keychain credential delete failed (status {status}).",
+            )
+        return True
 
 
 def _windows_credential_api():
@@ -827,6 +959,8 @@ _FLASH_INSTRUCTIONS = """\
 You are a bounded DeepSeek Flash child agent.
 
 Follow the parent assignment exactly.
+Answer in the same language as the parent assignment unless it explicitly
+requires another language.
 Prefer fast evidence gathering and rapid convergence.
 
 Do not broaden scope.
@@ -850,6 +984,8 @@ _PRO_INSTRUCTIONS = """\
 You are a DeepSeek Pro child agent.
 
 Work only on the bounded assignment supplied by the parent.
+Answer in the same language as the parent assignment unless it explicitly
+requires another language.
 
 For investigation:
 inspect -> hypotheses -> evidence -> eliminate -> root cause -> action -> verify.
@@ -890,10 +1026,12 @@ def _toml_string_array(values: List[str]) -> str:
 
 def _provider_auth_block() -> str:
     if platform_name() == "macos" and credential_backend() == "macos-keychain":
+        helper = str(Path(__file__).resolve())
+        python = sys.executable or "python3"
         return (
             "\n[model_providers.deepseek.auth]\n"
-            'command = "/usr/bin/security"\n'
-            f"args = {_toml_string_array(['find-generic-password', '-a', credential_account(), '-s', CREDENTIAL_TARGET, '-w'])}\n"
+            f"command = {_toml_string(python)}\n"
+            f"args = {_toml_string_array([helper, '_credential-get'])}\n"
             "timeout_ms = 5000\n"
             "refresh_interval_ms = 0\n"
         )
@@ -1231,7 +1369,7 @@ def our_hook_config(paths: Paths) -> Dict[str, Any]:
     command = (
         f'{python} "{handoff_script}" --mode hook --state-directory "{paths.handoff_dir}"'
     )
-    entry = hook_entry_json(command, "Delivering DeepSeek child assignment")
+    entry = hook_entry_json(command, "正在传递 DeepSeek 子 Agent 任务 / Delivering assignment")
     if platform_name() == "windows":
         ps1_script = paths.hooks_install_dir / "plaintext-handoff.ps1"
         windows_command = (
@@ -1562,6 +1700,7 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
     # Live-test evidence stays valid only while the managed files it tested
     # are still byte-identical to the installed versions.
     evidence_fresh = test_evidence and assets_valid and hook_entry_present(paths)
+    credential_is_present = credential_present()
 
     if installed:
         static_ok = (
@@ -1570,7 +1709,7 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
             and checks["catalog"]["registered"]
             and assets_valid
             and hooks_installed
-            and credential_present()
+            and credential_is_present
             and parent_unchanged
         )
         if manifest.get("disabled"):
@@ -1607,7 +1746,7 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
             "registered": checks["flash_agent"]["valid"] and checks["pro_agent"]["valid"],
             "top_level_untouched": parent_unchanged,
         },
-        credential={"backend": credential_backend(), "present": credential_present()},
+        credential={"backend": credential_backend(), "present": credential_is_present},
         hook={
             "installed": hooks_installed,
             "entry_present": entry_present,
@@ -1975,9 +2114,10 @@ def wait_for_child_metadata(
 def _smoke_env(paths: Paths) -> Dict[str, str]:
     env = dict(os.environ)
     env["CODEX_HOME"] = str(paths.codex_home)
-    # Make the key visible to the spawned child process regardless of the
-    # TOML auth style (env_key on Windows/Linux, Keychain command on macOS).
-    # The value is never logged or returned.
+    # Windows/Linux agents use env_key. macOS agents use the Python Keychain
+    # helper in their TOML and must not decrypt the key redundantly here.
+    if platform_name() == "macos" and credential_backend() == "macos-keychain":
+        return env
     try:
         key = read_credential_key()
     except ManagerError:
@@ -2160,8 +2300,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv == ["_credential-get"]:
+        try:
+            secret = read_credential_key()
+            if not secret:
+                print("DeepSeek API key is not available.", file=sys.stderr)
+                return 2
+            sys.stdout.write(secret)
+            return 0
+        except ManagerError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
     paths = resolve_paths(args.codex_home)
     try:
         codex_bin: Optional[str] = None

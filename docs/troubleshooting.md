@@ -13,6 +13,7 @@ Start with `status --json` — it is read-only and safe.
 | `inline_hook_config_unsupported` | `[hooks]` table inside config.toml | migrate it to `~/.codex/hooks.json`, then rerun |
 | `operation_in_progress` | concurrent manager run | wait for the other process to finish |
 | `parent_model_unconfigured` | no top-level `model` in config.toml | set a parent model in Codex, then rerun |
+| repeated macOS login-password prompts | stale agent auth still calls `/usr/bin/security`, or Python changed after setup | update the Skill, run `repair --json` with the same `python3`, then restart Codex |
 
 ## Hook review and handoff
 

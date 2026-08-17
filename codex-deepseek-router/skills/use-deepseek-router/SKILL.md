@@ -9,6 +9,13 @@ Use DeepSeek only when delegation materially improves cost, context isolation,
 parallel exploration, or reasoning quality. The Codex parent stays the main
 agent: it decides, verifies, and integrates.
 
+## User-facing language
+
+Write all parent commentary and final responses in the same language as the user's latest request,
+unless the user explicitly asks for another language.
+Tell the child to answer in that language as part of every assignment, and
+translate internal English status codes instead of exposing them as prose.
+
 ## Step 1 — Modality
 
 Classify the task as:

@@ -9,7 +9,7 @@
             "type": "command",
             "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"C:\\\\ABSOLUTE\\\\PATH\\\\TO\\\\codex-deepseek-router\\\\plaintext-handoff.ps1\" -Mode hook -StateDirectory \"C:\\\\ABSOLUTE\\\\PATH\\\\TO\\\\.codex\\\\deepseek-router\\\\handoff\"",
             "timeout": 10,
-            "statusMessage": "Delivering DeepSeek child assignment",
+            "statusMessage": "正在传递 DeepSeek 子 Agent 任务 / Delivering assignment",
             "additionalContextLimit": 0
           }
         ]

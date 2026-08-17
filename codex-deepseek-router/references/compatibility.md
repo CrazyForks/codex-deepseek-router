@@ -4,7 +4,7 @@
 
 | Platform | Credential backend | Agent TOML auth | Verified live smoke |
 |---|---|---|---|
-| macOS | Keychain (`security`) | Keychain command auth (generated at install) | Codex CLI `0.148.0-alpha.9` (this machine), oil-oil baseline |
+| macOS | Keychain (Security.framework) | same-Python Keychain helper (generated at install) | Codex CLI `0.148.0-alpha.9` (this machine), oil-oil baseline |
 | Windows | Credential Manager | `env_key = "DEEPSEEK_API_KEY"` | Utopia-V baseline: Windows Desktop `26.727.6591.0` |
 | Linux | `DEEPSEEK_API_KEY` env var | `env_key` | protocol/static tests; live smoke recommended |
 
@@ -61,5 +61,6 @@ random challenge marker. Flash passing never implies Pro passing.
   heuristically (presence of the installed script path).
 - **Inline hooks**: a `[hooks]` table inside `config.toml` is not merged by
   this installer; migrate it to `hooks.json` or review manually.
-- **macOS Keychain authorization**: the first child start may prompt to
-  allow `security` to read the credential item.
+- **macOS Python identity**: setup records the exact Python executable in the
+  generated agent auth block. Run `repair` after changing Python installations
+  so Keychain reads continue under the identity that owns the item.

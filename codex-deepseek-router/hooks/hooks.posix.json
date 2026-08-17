@@ -9,7 +9,7 @@
             "type": "command",
             "command": "python3 \"/ABSOLUTE/PATH/TO/codex-deepseek-router/plaintext_handoff.py\" --mode hook --state-directory \"/ABSOLUTE/PATH/TO/codex-home/deepseek-router/handoff\"",
             "timeout": 10,
-            "statusMessage": "Delivering DeepSeek child assignment",
+            "statusMessage": "正在传递 DeepSeek 子 Agent 任务 / Delivering assignment",
             "additionalContextLimit": 0
           }
         ]

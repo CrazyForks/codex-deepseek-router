@@ -15,11 +15,17 @@ locally instead of dispatching to DeepSeek.
   `io.github.codex-deepseek-router.deepseek-api-key`; Linux V1 uses the
   `DEEPSEEK_API_KEY` environment variable.
 - Accepted only through `--api-key-stdin`. Never via argv, config files,
-  JSON/TOML artifacts, temp files, debug logs, test fixtures, stdout, or
-  exception messages.
-- `status`/`doctor` output only `present: true/false`, never the value.
-- The manager injects the key into the `codex exec` environment for smoke
-  runs; the value is never logged or returned in any payload.
+  JSON/TOML artifacts, temp files, debug logs, test fixtures, user-facing
+  command output, or exception messages. The private `_credential-get`
+  helper writes the value only to Codex's captured provider-auth pipe.
+- On macOS, Security.framework reads and writes run under the same Python
+  executable identity. Agent auth calls the private `_credential-get` helper;
+  it does not switch to `/usr/bin/security` and trigger a foreign-app ACL prompt.
+- `status`/`doctor` use metadata-only existence checks and output only
+  `present: true/false`, never the value.
+- Windows/Linux smoke runs inject the key into the `codex exec` environment;
+  macOS uses the Keychain helper directly. The value is never logged or
+  returned in any payload.
 - Tests and CI scan repository artifacts for `sk-…`, `DEEPSEEK_API_KEY=`,
   `Authorization: Bearer` patterns.
 

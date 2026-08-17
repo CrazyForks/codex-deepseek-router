@@ -248,6 +248,16 @@ def test_runtime_skill_documents_the_dispatch_steps():
         assert marker in text
 
 
+def test_skills_require_user_facing_language_matching():
+    skill_paths = (
+        PACKAGE / "SKILL.md",
+        PACKAGE / "skills" / "use-deepseek-router" / "SKILL.md",
+    )
+    for path in skill_paths:
+        text = path.read_text()
+        assert "same language as the user's latest request" in text, path
+
+
 # ---------------------------------------------------------------------------
 # routing eval datasets (Epic 21 fixtures)
 # ---------------------------------------------------------------------------

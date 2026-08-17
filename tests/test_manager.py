@@ -84,6 +84,20 @@ def test_agent_toml_dual_models_and_no_reasoning_effort():
     assert 'sandbox_mode = "workspace-write"' in pro
     auth_lines = ("env_key" in flash) or ("[model_providers.deepseek.auth]" in flash)
     assert auth_lines
+    assert "same language as the parent assignment" in flash
+    assert "same language as the parent assignment" in pro
+
+
+def test_macos_agent_auth_uses_the_same_python_credential_helper(monkeypatch):
+    monkeypatch.setattr(manager, "platform_name", lambda: "macos")
+    monkeypatch.setattr(manager, "credential_backend", lambda: "macos-keychain")
+
+    auth = manager._provider_auth_block()
+
+    assert f'command = {json.dumps(sys.executable)}' in auth
+    assert json.dumps(str(Path(manager.__file__).resolve())) in auth
+    assert '"_credential-get"' in auth
+    assert "/usr/bin/security" not in auth
 
 
 def test_agent_toml_never_contains_api_key_value():
@@ -687,6 +701,98 @@ def test_macos_store_credential_releases_partial_allocations(monkeypatch):
     assert released == [101]
 
 
+def test_macos_read_credential_uses_security_framework_without_subprocess(monkeypatch):
+    import ctypes
+
+    secret = b"sk-test-secret"
+    secret_buffer = ctypes.create_string_buffer(secret)
+    released = []
+    created = []
+
+    def allocate():
+        ref = 101 + len(created)
+        created.append(ref)
+        return ref
+
+    class FakeCF:
+        def CFStringCreateWithCString(self, alloc, value, encoding):
+            return allocate()
+
+        def CFDictionaryCreate(self, alloc, keys, values, count, kcb, vcb):
+            return allocate()
+
+        def CFDataGetLength(self, ref):
+            assert ref == 999
+            return len(secret)
+
+        def CFDataGetBytePtr(self, ref):
+            assert ref == 999
+            return ctypes.addressof(secret_buffer)
+
+        def CFRelease(self, ref):
+            released.append(ref)
+
+    class FakeSecurity:
+        def SecItemCopyMatching(self, query, result):
+            ctypes.cast(result, ctypes.POINTER(ctypes.c_void_p))[0] = ctypes.c_void_p(999)
+            return 0
+
+    monkeypatch.setattr(manager, "_macos_security_framework", lambda: (FakeSecurity(), FakeCF(), ctypes))
+    monkeypatch.setattr(
+        manager,
+        "_macos_security_constants",
+        lambda security, cf, ctypes_module: {
+            "class": 11,
+            "generic_password": 12,
+            "service": 13,
+            "account": 14,
+            "return_data": 15,
+            "true": 16,
+            "key_callbacks": 17,
+            "value_callbacks": 18,
+        },
+    )
+
+    def fail_if_spawned(*args, **kwargs):
+        raise AssertionError("credential reads must not spawn /usr/bin/security")
+
+    monkeypatch.setattr(manager.subprocess, "run", fail_if_spawned)
+
+    assert manager._macos_read_credential() == secret.decode()
+    assert sorted(released) == sorted(created + [999])
+
+
+def test_macos_credential_presence_does_not_decrypt_the_secret(monkeypatch):
+    monkeypatch.delenv(manager.API_KEY_ENV, raising=False)
+    monkeypatch.setattr(manager, "platform_name", lambda: "macos")
+    monkeypatch.setattr(manager, "credential_backend", lambda: "macos-keychain")
+    monkeypatch.setattr(manager, "_macos_credential_exists", lambda: True, raising=False)
+
+    def fail_if_read():
+        pytest.fail("credential presence checks must not decrypt the API key")
+
+    monkeypatch.setattr(manager, "_macos_read_credential", fail_if_read)
+
+    assert manager.credential_present() is True
+
+
+def test_static_status_checks_credential_presence_once(paths, fake_codex, no_credentials, monkeypatch):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    calls = 0
+
+    def credential_present():
+        nonlocal calls
+        calls += 1
+        return True
+
+    monkeypatch.setattr(manager, "credential_present", credential_present)
+
+    status = manager.static_status(paths, fake_codex)
+
+    assert status["status"] == "configured"
+    assert calls == 1
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS Security.framework")
 def test_macos_keychain_dictionary_is_accepted_by_native_api():
     security, cf, ctypes = manager._macos_security_framework()
@@ -863,6 +969,17 @@ def test_cli_status_roundtrip(tmp_home, fake_codex, monkeypatch, capsys):
     payload = json.loads(out)
     assert payload["status"] == "not_installed"
     assert "sk-" not in out
+
+
+def test_cli_credential_helper_prints_only_the_key(monkeypatch, capsys):
+    monkeypatch.setattr(manager, "read_credential_key", lambda: "sk-test-secret")
+
+    exit_code = manager.main(["_credential-get"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out == "sk-test-secret"
+    assert captured.err == ""
 
 
 def test_cli_setup_missing_credential(tmp_home, fake_codex, monkeypatch, capsys):

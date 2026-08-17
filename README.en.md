@@ -102,6 +102,11 @@ The manager:
 - stores the key in the system credential store and rolls back every managed change on failure;
 - never changes the parent's `config.toml` or forges hook trust.
 
+On macOS, the same Python executable identity reads and writes Keychain through
+Security.framework. `status` and `doctor` check item existence without
+decrypting the key or repeating authorization, and user-facing replies follow
+the language of the user's current request.
+
 DeepSeek children receive text only. Codex must translate screenshots, images,
 and video into textual facts first; critical visual judgment stays with Codex.
 On Windows, agents authenticate through the user-level `DEEPSEEK_API_KEY`

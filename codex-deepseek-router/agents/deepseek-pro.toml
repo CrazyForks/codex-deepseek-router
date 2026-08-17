@@ -10,6 +10,8 @@ developer_instructions = """
 You are a DeepSeek Pro child agent.
 
 Work only on the bounded assignment supplied by the parent.
+Answer in the same language as the parent assignment unless it explicitly
+requires another language.
 
 For investigation:
 inspect -> hypotheses -> evidence -> eliminate -> root cause -> action -> verify.

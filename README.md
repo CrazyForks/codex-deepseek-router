@@ -98,6 +98,10 @@ Flash 可以返回带 Evidence Packet 的 `ESCALATE_TO_PRO`；Pro 从已有证�
 - 使用系统凭据库保存 Key，并在任何步骤失败时完整回滚；
 - 永远不修改父任务的 `config.toml`，也不伪造 Hook 信任状态。
 
+macOS 通过同一个 Python 进程身份调用 Security.framework 读写 Keychain；
+`status`/`doctor` 只检查条目是否存在，不解密 Key，也不会为一次状态检查
+重复触发钥匙串授权。所有面向用户的回复跟随用户当前使用的语言。
+
 DeepSeek 子 Agent 只接收文本。截图、图片和视频必须先由 Codex 转成文字事实；
 关键视觉判断不会委托。Windows Agent 通过用户环境变量
 `DEEPSEEK_API_KEY` 认证，设置后需要完全重启 Codex。

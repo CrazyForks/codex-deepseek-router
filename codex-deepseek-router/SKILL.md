@@ -11,6 +11,13 @@ operations go through `scripts/codex_deepseek_router.py`; never hand-edit the
 TOML/JSON agent files, `hooks.json`, the model catalog or system credential
 stores.
 
+## User-facing language
+
+Write all commentary, questions, progress updates and final reports in the
+same language as the user's latest request, unless the user explicitly asks
+for another language. Treat English status codes and manager messages as
+machine-readable inputs to translate, not as a reason to switch languages.
+
 ## Key contracts
 
 - Codex stays the parent agent. The parent model and provider are never
