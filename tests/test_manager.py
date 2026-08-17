@@ -115,7 +115,12 @@ def test_flash_is_read_only_and_pro_owns_implementation():
     assert "read-only" in flash.split("developer_instructions")[0]
     assert "You are read-only" not in pro
     # The repo-shipped portable template carries the same contract.
-    template = (Path(__file__).resolve().parents[1] / "codex-deepseek-router" / "agents" / "deepseek-flash.toml").read_text()
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "codex-deepseek-router"
+        / "agents"
+        / "deepseek-flash.toml"
+    ).read_text(encoding="utf-8")
     assert "Never modify workspace files" in template
     assert 'sandbox_mode = "read-only"' in template
 
@@ -138,7 +143,7 @@ def test_catalog_is_stable_between_calls():
 
 
 def test_toml_top_level_string(tmp_home):
-    text = (tmp_home / "config.toml").read_text()
+    text = (tmp_home / "config.toml").read_text(encoding="utf-8")
     assert manager.toml_get_top_level_string(text, "model") == "gpt-5.6-test"
     assert manager.toml_get_top_level_string(text, "model_provider") == "openai"
     assert manager.toml_get_top_level_string(text, "missing") is None
@@ -262,7 +267,7 @@ def test_hook_ownership_rejects_shell_metacharacters(paths):
 
 
 def test_setup_lifecycle(paths, fake_codex, no_credentials):
-    before = paths.config.read_text()
+    before = paths.config.read_text(encoding="utf-8")
     payload = manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
     assert payload["status"] == "configured"
     assert payload["hook_review_required"] is True
@@ -274,7 +279,7 @@ def test_setup_lifecycle(paths, fake_codex, no_credentials):
     assert (paths.hooks_install_dir / "plaintext-handoff.ps1").is_file()
     assert paths.manifest.is_file()
     # Parent isolation: config.toml byte-identical after install.
-    assert paths.config.read_text() == before
+    assert paths.config.read_text(encoding="utf-8") == before
 
     manifest = manager.read_manifest(paths)
     assert manifest["original"]["parent_model"] == "gpt-5.6-test"
@@ -301,13 +306,13 @@ def test_setup_lifecycle(paths, fake_codex, no_credentials):
     assert disabled["status"] == "disabled"
     assert paths.flash_agent.is_file() and paths.pro_agent.is_file()
     assert paths.catalog.is_file()
-    hooks = json.loads(paths.hooks_config.read_text())
+    hooks = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     assert "SubagentStart" not in hooks.get("hooks", {})
     assert manager.static_status(paths, fake_codex)["status"] == "disabled"
 
     # repair restores routing
     assert manager.repair(paths, fake_codex)["status"] == "configured"
-    hooks = json.loads(paths.hooks_config.read_text())
+    hooks = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     assert len(hooks["hooks"]["SubagentStart"]) == 1
 
     # uninstall removes everything we own, keeps the credential
@@ -320,7 +325,7 @@ def test_setup_lifecycle(paths, fake_codex, no_credentials):
     assert not paths.runtime_skill_dir.exists()
     assert not paths.hooks_install_dir.exists()
     assert not paths.state_dir.exists()
-    assert paths.config.read_text() == before
+    assert paths.config.read_text(encoding="utf-8") == before
 
 
 def test_setup_reads_utf8_when_platform_default_is_cp1252(
@@ -351,7 +356,7 @@ def test_setup_reads_utf8_when_platform_default_is_cp1252(
 
 
 def test_setup_rolls_back_on_conflict(paths, fake_codex, no_credentials):
-    before = paths.config.read_text()
+    before = paths.config.read_text(encoding="utf-8")
     paths.agents_dir.mkdir(parents=True)
     paths.pro_agent.write_text('name = "foreign"\n')
     with pytest.raises(manager.ManagerError) as exc:
@@ -361,7 +366,7 @@ def test_setup_rolls_back_on_conflict(paths, fake_codex, no_credentials):
     assert not paths.flash_agent.exists()
     assert not paths.catalog.exists()
     assert not paths.manifest.exists()
-    assert paths.config.read_text() == before
+    assert paths.config.read_text(encoding="utf-8") == before
 
 
 def test_setup_conflicts_on_foreign_hook_script(paths, fake_codex, no_credentials):
@@ -371,7 +376,9 @@ def test_setup_conflicts_on_foreign_hook_script(paths, fake_codex, no_credential
         manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
     assert exc.value.code == "conflict"
     # The foreign script survives untouched; everything else was rolled back.
-    assert (paths.hooks_install_dir / "plaintext_handoff.py").read_text() == "# foreign script\n"
+    assert (
+        paths.hooks_install_dir / "plaintext_handoff.py"
+    ).read_text(encoding="utf-8") == "# foreign script\n"
     assert not (paths.hooks_install_dir / "plaintext-handoff.ps1").exists()
     assert not paths.flash_agent.exists()
     assert not paths.catalog.exists()
@@ -393,7 +400,7 @@ def test_setup_rollback_covers_hook_scripts_and_skill(paths, fake_codex, no_cred
     assert not paths.flash_agent.exists()
     assert not paths.catalog.exists()
     # The foreign hooks.json is byte-identical after rollback.
-    assert json.loads(paths.hooks_config.read_text()) == foreign
+    assert json.loads(paths.hooks_config.read_text(encoding="utf-8")) == foreign
 
 
 def test_setup_rollback_preserves_existing_file_mode(paths, fake_codex, no_credentials):
@@ -425,7 +432,7 @@ def test_setup_conflicts_on_foreign_catalog(paths, fake_codex, no_credentials):
     with pytest.raises(manager.ManagerError) as exc:
         manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
     assert exc.value.code == "conflict"
-    assert paths.catalog.read_text() == '{"models": [{"slug": "foreign-model"}]}\n'
+    assert paths.catalog.read_text(encoding="utf-8") == '{"models": [{"slug": "foreign-model"}]}\n'
 
 
 def test_setup_merges_unrelated_hooks(paths, fake_codex, no_credentials):
@@ -443,20 +450,20 @@ def test_setup_merges_unrelated_hooks(paths, fake_codex, no_credentials):
     payload = manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
     assert payload["status"] == "configured"
     assert payload["adopted_existing"]["hook"] is False
-    hooks = json.loads(paths.hooks_config.read_text())
+    hooks = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     assert len(hooks["hooks"]["UserPromptSubmit"]) == 1
     assert len(hooks["hooks"]["SubagentStart"]) == 1
     manager.repair(paths, fake_codex)
-    hooks = json.loads(paths.hooks_config.read_text())
+    hooks = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     assert len(hooks["hooks"]["UserPromptSubmit"]) == 1
     assert len(hooks["hooks"]["SubagentStart"]) == 1
     manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
-    hooks = json.loads(paths.hooks_config.read_text())
+    hooks = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     assert len(hooks["hooks"]["UserPromptSubmit"]) == 1
     assert len(hooks["hooks"]["SubagentStart"]) == 1
     # disable must keep the unrelated hook
     manager.disable(paths)
-    hooks = json.loads(paths.hooks_config.read_text())
+    hooks = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     assert "UserPromptSubmit" in hooks["hooks"]
     assert "SubagentStart" not in hooks["hooks"]
 
@@ -466,7 +473,7 @@ def test_status_requires_full_hook_invariant(paths, fake_codex, no_credentials):
     assert manager.static_status(paths, fake_codex)["status"] == "configured"
 
     # Externally remove the router entry but keep the file (review finding P2-4).
-    config = json.loads(paths.hooks_config.read_text())
+    config = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     config["hooks"].pop("SubagentStart", None)
     paths.hooks_config.write_text(json.dumps(config))
     status = manager.static_status(paths, fake_codex)
@@ -527,7 +534,7 @@ def test_unknown_hash_version_never_uses_legacy_normalization(tmp_path):
 
 def test_status_requires_exact_router_hook_entry(paths, fake_codex, no_credentials):
     manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
-    config = json.loads(paths.hooks_config.read_text())
+    config = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     entry = config["hooks"]["SubagentStart"][0]["hooks"][0]
     entry["command"] += " --foreign-behavior"
     paths.hooks_config.write_text(json.dumps(config))
@@ -540,7 +547,7 @@ def test_status_requires_exact_router_hook_entry(paths, fake_codex, no_credentia
 
 def test_status_rejects_conflicting_duplicate_router_hook(paths, fake_codex, no_credentials):
     manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
-    config = json.loads(paths.hooks_config.read_text())
+    config = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     foreign = json.loads(json.dumps(config["hooks"]["SubagentStart"][0]))
     foreign["hooks"][0]["command"] += " --foreign-behavior"
     config["hooks"]["SubagentStart"].append(foreign)
@@ -871,7 +878,7 @@ def test_uninstall_restores_preexisting_catalog(paths, fake_codex, no_credential
     manager.uninstall(paths, remove_credential=False)
     # A preexisting catalog is restored, never deleted.
     assert paths.catalog.is_file()
-    assert json.loads(paths.catalog.read_text()) == manager.catalog_payload()
+    assert json.loads(paths.catalog.read_text(encoding="utf-8")) == manager.catalog_payload()
 
 
 def test_uninstall_refuses_modified_managed_file(paths, fake_codex, no_credentials):
@@ -931,7 +938,7 @@ def test_status_never_contains_key(paths, fake_codex, no_credentials, monkeypatc
     assert secret not in serialized
     serialized = json.dumps(manager.doctor(paths, fake_codex))
     assert secret not in serialized
-    assert "sk-" not in paths.manifest.read_text()
+    assert "sk-" not in paths.manifest.read_text(encoding="utf-8")
 
 
 def test_status_on_empty_home(paths, fake_codex):
