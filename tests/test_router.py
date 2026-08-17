@@ -246,3 +246,42 @@ def test_runtime_skill_documents_the_dispatch_steps():
         'fork_turns="none"',
     ):
         assert marker in text
+
+
+# ---------------------------------------------------------------------------
+# routing eval datasets (Epic 21 fixtures)
+# ---------------------------------------------------------------------------
+
+EVAL_FILES = {
+    "eval-flash-advantage.json": ("A", 20, "FLASH"),
+    "eval-pro-advantage.json": ("B", 20, "PRO"),
+    "eval-multimodal.json": ("C", 10, None),
+    "eval-no-delegation.json": ("D", 10, "NONE"),
+}
+
+
+def test_eval_datasets_are_complete_and_consistent():
+    for filename, (group, expected_size, expected_agent) in EVAL_FILES.items():
+        payload = json.loads((FIXTURES / filename).read_text())
+        assert payload["group"] == group
+        tasks = payload["tasks"]
+        assert len(tasks) == expected_size, filename
+        ids = [task["id"] for task in tasks]
+        assert len(set(ids)) == len(ids), f"duplicate ids in {filename}"
+        for task in tasks:
+            assert task["expected_agent"] in {"FLASH", "PRO", "NONE"}
+            assert task["expected_policy"] in {"FAST", "REACT", "SPEC", "DEEP"}
+            assert task["expected_modality"] in {
+                "TEXT_ONLY",
+                "VISION_TRANSLATABLE",
+                "VISION_CRITICAL",
+            }
+            if expected_agent:
+                assert task["expected_agent"] == expected_agent, f"{filename}/{task['id']}"
+
+
+def test_multimodal_dataset_never_routes_visual_critical_to_deepseek():
+    payload = json.loads((FIXTURES / "eval-multimodal.json").read_text())
+    for task in payload["tasks"]:
+        if task["expected_modality"] == "VISION_CRITICAL":
+            assert task["expected_agent"] == "NONE", task["id"]

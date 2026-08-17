@@ -1,0 +1,17 @@
+{
+  "group": "D",
+  "name": "no-delegation",
+  "threshold": "10/10 routed to NONE (no DeepSeek spawn)",
+  "tasks": [
+    {"id": "D01", "task": "Reply with the current working directory path.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "D02", "task": "Change 'foo' to 'bar' on line 12 of the file I just mentioned.", "expected_agent": "NONE", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "D03", "task": "Summarize the last thing I said in this conversation.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "D04", "task": "Judge whether this image has visual compression artifacts.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "VISION_CRITICAL"},
+    {"id": "D05", "task": "Rotate my .env file values into the deployment config without printing secrets.", "expected_agent": "NONE", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "D06", "task": "What did the command I just ran output?", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "D07", "task": "Paste the API token from .env into the new config file.", "expected_agent": "NONE", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "D08", "task": "Approve or reject this one-line style suggestion in the file I have open.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "D09", "task": "Tell me whether my personal medical record file looks complete.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "D10", "task": "Delete the temporary file I just created.", "expected_agent": "NONE", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "group": "A",
+  "name": "flash-advantage",
+  "threshold": ">= 80% routed to FLASH",
+  "tasks": [
+    {"id": "A01", "task": "Find every call site of create_job in this repository and list file:line.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A02", "task": "Find the earliest exception in this 5000-line test log and quote the surrounding 20 lines.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A03", "task": "Map the directory layout of this Go repository into a one-page tree with a purpose note per top-level directory.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A04", "task": "List every TODO/FIXME comment in src/ with its file and line number.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A05", "task": "Extract all SQL queries from this ORM model file and list them in order.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A06", "task": "Rename the local variable 'tmp' to 'buffer' in this single function.", "expected_agent": "FLASH", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "A07", "task": "Find which dependencies import 'left-pad' and report their package.json paths.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A08", "task": "Summarize the route table in this Express app as a markdown list.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A09", "task": "Count how many tests are marked skip or todo and group them by file.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A10", "task": "Find the definition of the ErrorKind enum and list all variants.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A11", "task": "Add a doc comment to these three public functions without changing behavior.", "expected_agent": "FLASH", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "A12", "task": "Collect every environment variable name referenced in the codebase and deduplicate them.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A13", "task": "Trace which functions call read_config and produce a one-line-per-edge call graph.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A14", "task": "List all files changed in the last commit that touch the api/ directory.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A15", "task": "Convert this 200-line JSON fixture to the key order of the example file.", "expected_agent": "FLASH", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "A16", "task": "Find the configuration key that controls the retry count and report its default.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A17", "task": "Extract the error codes thrown in this module and produce a sorted list with messages.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A18", "task": "Update the version string in package.json and CHANGELOG.md to 1.4.2.", "expected_agent": "FLASH", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "A19", "task": "Find all markdown links that 404 against the local docs tree.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"},
+    {"id": "A20", "task": "List every feature flag name and the file where it is checked.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "TEXT_ONLY"}
+  ]
+}

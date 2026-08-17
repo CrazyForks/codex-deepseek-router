@@ -1,0 +1,17 @@
+{
+  "group": "C",
+  "name": "multimodal",
+  "threshold": "10/10 correctly classified",
+  "tasks": [
+    {"id": "C01", "task": "Change this React page to match the attached UI screenshot.", "expected_agent": "FLASH", "expected_policy": "REACT", "expected_modality": "VISION_TRANSLATABLE"},
+    {"id": "C02", "task": "Read the error popup in the screenshot and fix the reported bug.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "VISION_TRANSLATABLE"},
+    {"id": "C03", "task": "Judge whether this photo has visual compression artifacts.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "VISION_CRITICAL"},
+    {"id": "C04", "task": "From the terminal screenshot, extract the failing test command and fix the test.", "expected_agent": "FLASH", "expected_policy": "REACT", "expected_modality": "VISION_TRANSLATABLE"},
+    {"id": "C05", "task": "Compare these two screenshots pixel by pixel and list every difference.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "VISION_CRITICAL"},
+    {"id": "C06", "task": "Implement the data flow shown in this simple architecture diagram.", "expected_agent": "PRO", "expected_policy": "REACT", "expected_modality": "VISION_TRANSLATABLE"},
+    {"id": "C07", "task": "Assess the diagnostic quality of this medical scan image.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "VISION_CRITICAL"},
+    {"id": "C08", "task": "From the bar chart screenshot, extract the top three values and write them into the report.", "expected_agent": "FLASH", "expected_policy": "FAST", "expected_modality": "VISION_TRANSLATABLE"},
+    {"id": "C09", "task": "Verify the visual alignment of the redesigned header against the spec image.", "expected_agent": "NONE", "expected_policy": "FAST", "expected_modality": "VISION_CRITICAL"},
+    {"id": "C10", "task": "Follow the wireframe screenshot to build the form component.", "expected_agent": "FLASH", "expected_policy": "REACT", "expected_modality": "VISION_TRANSLATABLE"}
+  ]
+}

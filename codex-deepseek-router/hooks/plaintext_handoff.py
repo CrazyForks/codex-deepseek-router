@@ -128,7 +128,8 @@ def state_lock(root: pathlib.Path, agent_type: str):
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         root.chmod(0o700)
         descriptor = os.open(lock_path(root, agent_type), os.O_RDWR | os.O_CREAT, 0o600)
-        os.fchmod(descriptor, 0o600)
+        if hasattr(os, "fchmod"):  # not available on Windows
+            os.fchmod(descriptor, 0o600)
         lock_file = os.fdopen(descriptor, "a+")
         if not _try_lock_file(lock_file):
             raise HandoffBusy(

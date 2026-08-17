@@ -1,0 +1,27 @@
+{
+  "group": "B",
+  "name": "pro-advantage",
+  "threshold": ">= 85% routed to PRO",
+  "tasks": [
+    {"id": "B01", "task": "Why do lease renew and settlement occasionally race, and what is the minimal fix?", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B02", "task": "Two replicas report different committed offsets after a network partition; find the root cause.", "expected_agent": "PRO", "expected_policy": "DEEP", "expected_modality": "TEXT_ONLY"},
+    {"id": "B03", "task": "Review this authentication middleware for session-fixation and replay issues.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B04", "task": "Design the module boundaries for splitting this 4000-line monolith into three crates.", "expected_agent": "PRO", "expected_policy": "DEEP", "expected_modality": "TEXT_ONLY"},
+    {"id": "B05", "task": "The scheduler occasionally double-runs a job after a leader failover; explain and fix.", "expected_agent": "PRO", "expected_policy": "DEEP", "expected_modality": "TEXT_ONLY"},
+    {"id": "B06", "task": "Find the root cause of this deadlock from the attached thread dumps.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B07", "task": "Refactor the payment pipeline to be idempotent without changing its public API.", "expected_agent": "PRO", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "B08", "task": "Audit this caching layer for correctness under concurrent eviction and re-insertion.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B09", "task": "Model the state machine of the checkout flow and list every invalid transition currently reachable.", "expected_agent": "PRO", "expected_policy": "DEEP", "expected_modality": "TEXT_ONLY"},
+    {"id": "B10", "task": "Why does the build pass locally but fail in CI only on aarch64? Diagnose from the logs.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B11", "task": "Compare two alternative sharding schemes for correctness and rebalance cost, then recommend one.", "expected_agent": "PRO", "expected_policy": "DEEP", "expected_modality": "TEXT_ONLY"},
+    {"id": "B12", "task": "Find why the reported latency p99 doubled after the last release using the traces.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B13", "task": "Check this distributed lock implementation for split-brain scenarios under clock drift.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B14", "task": "Implement cross-module support for a new event type end to end.", "expected_agent": "PRO", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"},
+    {"id": "B15", "task": "Review this migration plan for data loss and propose a rollback-safe ordering.", "expected_agent": "PRO", "expected_policy": "DEEP", "expected_modality": "TEXT_ONLY"},
+    {"id": "B16", "task": "Why does the feature flag sometimes apply and sometimes not for the same user? Root-cause it.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B17", "task": "Assess whether this webhook endpoint can be exploited for SSRF and recommend hardening.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B18", "task": "Untangle the ownership cycle between the three services and propose a dependency direction.", "expected_agent": "PRO", "expected_policy": "DEEP", "expected_modality": "TEXT_ONLY"},
+    {"id": "B19", "task": "Fix the flaky test by finding which shared fixture state leaks between test cases.", "expected_agent": "PRO", "expected_policy": "SPEC", "expected_modality": "TEXT_ONLY"},
+    {"id": "B20", "task": "Implement backpressure in this pipeline so slow consumers cannot exhaust memory.", "expected_agent": "PRO", "expected_policy": "REACT", "expected_modality": "TEXT_ONLY"}
+  ]
+}

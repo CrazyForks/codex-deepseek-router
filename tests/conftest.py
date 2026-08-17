@@ -1,6 +1,5 @@
 """Shared test fixtures for the codex-deepseek-router test suite."""
 
-import stat
 import sys
 from pathlib import Path
 
@@ -35,12 +34,14 @@ def paths(tmp_home: Path) -> manager.Paths:
 
 
 @pytest.fixture
-def fake_codex(tmp_path: Path) -> str:
-    """A stub Codex runtime that only answers --version."""
-    script = tmp_path / "fake-codex"
-    script.write_text("#!/bin/sh\necho 'codex-cli 0.148.0-test'\n")
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    return str(script)
+def fake_codex(tmp_path: Path, monkeypatch) -> str:
+    """A stub Codex runtime path. Unit tests never execute it; the version
+    probe is stubbed so the fixture works on every platform (the real
+    smoke test command is the only place that spawns the runtime)."""
+    binary = tmp_path / "fake-codex"
+    binary.write_text("not executed by unit tests")
+    monkeypatch.setattr(manager, "codex_version_text", lambda codex_bin: "codex-cli 0.148.0-test")
+    return str(binary)
 
 
 @pytest.fixture
