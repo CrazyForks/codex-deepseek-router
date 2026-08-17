@@ -1080,7 +1080,12 @@ def try_acquire_file_lock(lock_file) -> bool:
             return False
     if msvcrt is not None:
         lock_file.seek(0)
-        if lock_file.read(1) == "":
+        try:
+            first_byte = lock_file.read(1)
+        except OSError:
+            # Windows denies reads when another handle locks this byte.
+            return False
+        if first_byte == "":
             lock_file.seek(0)
             lock_file.write("\0")
             lock_file.flush()

@@ -554,7 +554,8 @@ def test_repair_migrates_legacy_normalized_asset_hashes(paths, fake_codex, no_cr
     }
     manager.write_manifest(paths, manifest)
     powershell = paths.hooks_install_dir / "plaintext-handoff.ps1"
-    powershell.write_bytes(powershell.read_bytes().replace(b"\n", b"\r\n"))
+    normalized = powershell.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    powershell.write_bytes(normalized.replace(b"\n", b"\r\n"))
 
     result = manager.repair(paths, fake_codex)
 
@@ -773,6 +774,20 @@ def test_operation_lock_blocks_concurrent_setup(paths, fake_codex, no_credential
     release.set()
     thread.join(timeout=5)
     assert outcome["error"] == "operation_in_progress"
+
+
+def test_windows_operation_lock_read_denial_means_contended(monkeypatch):
+    class LockedByte:
+        def seek(self, offset):
+            pass
+
+        def read(self, size):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(manager, "fcntl", None)
+    monkeypatch.setattr(manager, "msvcrt", object())
+
+    assert manager.try_acquire_file_lock(LockedByte()) is False
 
 
 def test_status_never_contains_key(paths, fake_codex, no_credentials, monkeypatch):

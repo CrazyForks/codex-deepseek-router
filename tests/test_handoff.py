@@ -304,6 +304,20 @@ def test_state_lock_is_exclusive(handoff_dir):
     assert outcome["error"] == "busy"
 
 
+def test_windows_lock_read_denial_means_contended(monkeypatch):
+    class LockedByte:
+        def seek(self, offset):
+            pass
+
+        def read(self, size):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(handoff, "fcntl", None)
+    monkeypatch.setattr(handoff, "msvcrt", object())
+
+    assert handoff._try_lock_file(LockedByte()) is False
+
+
 def test_locks_are_per_role(handoff_dir):
     with handoff.state_lock(handoff_dir, FLASH):
         with handoff.state_lock(handoff_dir, PRO):
