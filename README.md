@@ -1,68 +1,124 @@
-# codex-deepseek-router
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-router：Codex 保持父 Agent，按任务把工作路由到 DeepSeek Flash 或 Pro，并验证原生回调">
+</p>
 
-English | [简体中文](README.zh-CN.md)
+<p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-A thin, reliable routing layer that lets Codex keep itself as the parent
-agent while delegating to two native DeepSeek child agents — and choose
-between them, and how they reason, based on the task.
+<p align="center">
+  <a href="https://github.com/TheBlindM/codex-deepseek-router/actions/workflows/ci.yml"><img src="https://github.com/TheBlindM/codex-deepseek-router/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
+</p>
 
-```text
-Codex Parent (unchanged model/provider)
-        │
-        ├─ Modality Gate   TEXT_ONLY / VISION_TRANSLATABLE / VISION_CRITICAL
-        ├─ Sensitivity Gate  secrets stay local
-        ├─ Model Router     deepseek_flash (deepseek-v4-flash) | deepseek_pro (deepseek-v4-pro) | NONE
-        ├─ Policy Router    FAST / REACT / SPEC / DEEP
-        ├─ Plaintext Handoff (SubagentStart hook: stage -> claim -> deliver -> consume)
-        ▼
-  DeepSeek child  →  native callback  →  Parent verification & integration
-```
+> Codex 始终是父 Agent。它按任务选择 `deepseek_flash` 或 `deepseek_pro`，通过
+> 原生 `spawn_agent` 派发，最后由 Codex 验证并整合结果。
 
-What it is **not**: a daemon, proxy, MCP server, database, second Codex CLI,
-custom agent runtime, or learned router. V1 is a set of managed files — two
-agent TOMLs, one handoff hook, one routing skill, one manager script — with
-transactional, rollback-safe installs.
+## 先看结果
 
-## Quick start
+| 主控不变 | 双 Agent 分工 | 结果可证明 |
+| --- | --- | --- |
+| 不修改 `config.toml`，父模型、Provider 和 ChatGPT 登录保持原样 | Flash 负责快速只读探索，Pro 负责深度推理与实现 | callback、线程数据库元数据、随机 challenge marker 三重验收 |
 
-Requirements: Node.js/npm, Python 3.9+, the Codex desktop app (started at
-least once), and a DeepSeek API key.
+这不是 daemon、proxy、MCP Server 或第二套 Agent runtime。它是一组受管的
+Codex 原生配置：两个 Agent、一个模型目录、一个明文交接 Hook、一个运行时
+路由 Skill 和一个事务化管理器。
 
-1. Install the management skill globally for Codex:
+## 快速开始
+
+要求：Node.js/npm、Python 3.9+、至少启动过一次的 Codex 桌面应用，以及
+DeepSeek API Key。
+
+### 1. 安装管理 Skill
 
 ```bash
-npx skills add TheBlindM/codex-deepseek-router --skill codex-deepseek-router -g -a codex -y
+npx skills add TheBlindM/codex-deepseek-router -g -y
 ```
 
-This uses the open [`skills` CLI](https://github.com/vercel-labs/skills) to
-install this repository's skill; this project does not publish or execute a
-separate npm package.
+这条命令使用开放的 [`skills` CLI](https://github.com/vercel-labs/skills) 从
+GitHub 安装 Skill；本项目不需要单独发布 npm 包。
 
-2. Restart the Codex desktop app, open a new task, and ask:
+### 2. 在 Codex 中完成配置
+
+重启 Codex、打开新任务，然后说：
 
 ```text
-Install and configure codex-deepseek-router for me.
+请帮我安装并配置 codex-deepseek-router。
 ```
 
-3. The skill checks the current state first. If no credential exists, Codex
-   asks for the DeepSeek API key and passes it to the manager through stdin
-   only. The manager installs both agents, the model catalog, the handoff hook,
-   and the runtime routing skill transactionally.
+Skill 会先检查状态。缺少凭据时，Codex 会索要 API Key，并只通过标准输入
+交给管理器；密钥不会进入命令参数、配置文件或聊天回显。
 
-4. Review and trust the new hook with `/hooks`, then ask Codex to run the live
-   router test. Both Flash and Pro must pass independently. Restart the app and
-   open a new task once the result is `ready`.
+### 3. 审查并验收
 
-After that, use it naturally:
+1. 在 Codex 中运行 `/hooks`，审查并信任新 Hook。
+2. 让 Codex 运行真实路由测试；Flash 与 Pro 必须分别通过。
+3. 结果为 `ready` 后，重启应用并新建任务。
+
+以后可以直接说：
 
 ```text
-Use the DeepSeek agents to review this repository.
+用 DeepSeek 子 Agent 评审这个仓库。
 ```
 
-### Install from source
+## 它如何工作
 
-For development or manual inspection, clone the repository and invoke the
-manager directly:
+```text
+用户任务
+   │
+   ├─ 模态门：TEXT_ONLY / VISION_TRANSLATABLE / VISION_CRITICAL
+   ├─ 敏感数据门：密钥与敏感内容留在 Codex
+   ├─ 模型路由：Flash / Pro / 不委托
+   └─ 策略路由：FAST / REACT / SPEC / DEEP
+            │
+            ▼
+stage → SubagentStart Hook → DeepSeek 子 Agent
+            │
+            ▼
+原生 callback → 元数据与 marker 验证 → Codex 整合
+```
+
+### 谁来做什么
+
+| 路由目标 | 适合 | 边界 |
+| --- | --- | --- |
+| `deepseek_flash` | 搜索、枚举、日志、抽取、代码地图、大量阅读 | 只读；输出修改提案，不直接改文件 |
+| `deepseek_pro` | 根因、架构、并发、安全、复杂评审和跨模块实现 | 可写工作区；负责需要深度推理的落地 |
+| Codex 父 Agent | 琐碎任务、敏感内容、关键视觉判断、最终验证与整合 | 始终保留主控权 |
+
+Flash 可以返回带 Evidence Packet 的 `ESCALATE_TO_PRO`；Pro 从已有证据继续，
+不重新扫描整个仓库。FAST / REACT / SPEC / DEEP 为有边界的决策合同，不是
+额外的模型或运行时。
+
+## 安装内容与安全边界
+
+管理器会：
+
+- 同时安装 `deepseek-flash.toml` 与 `deepseek-pro.toml`；
+- 在 `~/.codex/models.json` 同时注册两个模型；
+- 将交接 Hook 合并进 `~/.codex/hooks.json`，保留无关 Hook；
+- 安装 `use-deepseek-router` 运行时 Skill；
+- 使用系统凭据库保存 Key，并在任何步骤失败时完整回滚；
+- 永远不修改父任务的 `config.toml`，也不伪造 Hook 信任状态。
+
+DeepSeek 子 Agent 只接收文本。截图、图片和视频必须先由 Codex 转成文字事实；
+关键视觉判断不会委托。Windows Agent 通过用户环境变量
+`DEEPSEEK_API_KEY` 认证，设置后需要完全重启 Codex。
+
+## 管理命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `status` | 只读检查运行时、Agent、模型目录、凭据与 Hook |
+| `setup` | 幂等、事务化地安装全部组件 |
+| `test` | 分别执行 Flash 与 Pro 的真实原生派发验收 |
+| `repair` | 在父模型升级、Codex 更新或配置漂移后恢复 |
+| `disable` | 只移除路由 Hook，保留凭据、目录与备份 |
+| `uninstall` | 删除本项目拥有的内容；默认保留 API Key |
+| `doctor` | 诊断环境、Hook 信任与 handoff 状态 |
+
+所有命令支持 `--json` 与 `--codex-home`。退出码：`0` 表示
+ready/configured，`2` 表示需要人工处理，`3` 表示超时，`1` 表示意外失败。
+
+<details>
+<summary><strong>从源码安装与手动验收</strong></summary>
 
 ```bash
 git clone https://github.com/TheBlindM/codex-deepseek-router.git
@@ -70,130 +126,59 @@ cd codex-deepseek-router
 python3 codex-deepseek-router/scripts/codex_deepseek_router.py status --json
 ```
 
-Set the key (stdin only — never argv, files, or chat echo):
+只通过 stdin 配置 Key：
 
 ```bash
-printf '%s\n' '<your-key>' | python3 codex-deepseek-router/scripts/codex_deepseek_router.py setup --api-key-stdin --json
+printf '%s\n' '<你的key>' | python3 codex-deepseek-router/scripts/codex_deepseek_router.py setup --api-key-stdin --json
 ```
 
-The installer:
-
-- installs both agents (`~/.codex/agents/deepseek-flash.toml`,
-  `deepseek-pro.toml`) — the DeepSeek provider lives inside them;
-- registers both models in `~/.codex/models.json` (never one without the
-  other);
-- installs the plaintext handoff hook into `~/.codex/hooks.json` (unrelated
-  hooks preserved);
-- installs the `use-deepseek-router` runtime skill;
-- **never touches `config.toml`** — your parent model, provider and ChatGPT
-  login stay exactly as they are;
-- rolls back on any failure.
-
-Then review the hook in Codex (`/hooks`) — the installer deliberately does
-not forge trust — and run the live smoke tests:
+审查 Hook 后运行真实验收：
 
 ```bash
 python3 codex-deepseek-router/scripts/codex_deepseek_router.py test --json
 ```
 
-`test` proves, for **each** agent separately: native `spawn_agent` → DeepSeek
-child receives the staged assignment → child replies with a random challenge
-marker → `state_*.sqlite` shows `model_provider=deepseek` with the expected
-model and agent role. Flash passing never implies Pro passing. A new task /
-app restart is required after setup.
+`test` 会分别证明两个角色使用正确的 `model_provider`、model 与 agent role，
+并验证每个子 Agent 返回独立的随机 marker。Flash 通过不代表 Pro 通过。
 
-On Windows, the agent templates read `DEEPSEEK_API_KEY` from the
-environment: set it as a user environment variable and fully restart the
-Codex app (the manager stores the key in Credential Manager and injects it
-into its own smoke runs).
+</details>
 
-## Daily use
+## 文档
 
-Codex stays the parent and decides. The `use-deepseek-router` skill guides:
+- [架构](codex-deepseek-router/references/architecture.md) ·
+  [路由策略](codex-deepseek-router/references/routing-policy.md) ·
+  [多模态边界](codex-deepseek-router/references/multimodal.md)
+- [兼容性](codex-deepseek-router/references/compatibility.md) ·
+  [安全设计](codex-deepseek-router/references/security.md) ·
+  [故障排查](docs/troubleshooting.md)
+- [设计决策](docs/architecture.md) · [评测](docs/eval.md) ·
+  [上游来源映射](docs/upstream-reference-map.md)
 
-- **Modality first**: text goes to DeepSeek; translatable visuals are
-  described by the parent as a Visual Context Packet; critical visual
-  judgment stays in the parent.
-- **Flash** (`deepseek_flash`) for search, enumeration, logs, extraction,
-  code mapping, high-volume reading, and read-only change proposals — it
-  never edits files; the parent (or Pro) lands the change.
-- **Pro** (`deepseek_pro`) for root cause, architecture, concurrency,
-  security, cross-module refactors, and implementation.
-- **Policy**: FAST / REACT / SPEC / DEEP, with convergence built in.
-- **Escalation**: Flash returns `ESCALATE_TO_PRO` with an evidence packet;
-  Pro starts from that evidence instead of re-scanning the repository.
-- **No delegation** for trivial, secret-heavy, or purely visual work.
-
-Delegation is one native call after staging:
-
-```text
-stage assignment -> spawn_agent(agent_type="deepseek_flash", fork_turns="none") -> wait -> verify -> integrate
-```
-
-## Commands
-
-```text
-status      read-only state of runtime, agents, catalog, credential, hook
-setup       install everything (idempotent, transactional, rollback-safe)
-test        live dual-agent smoke tests (both roles, independently)
-repair      re-apply after parent-model upgrades / Codex updates / drift
-disable     remove only the routing hook; keeps credential + catalog + backups
-uninstall   remove everything this project owns; keeps the API key unless
-            --remove-credential is passed
-doctor      environment + handoff-state diagnostics
-```
-
-All commands accept `--json` and `--codex-home`. Exit codes:
-`0` ready/configured, `2` action needed (missing credential, conflict, …),
-`3` timeout, `1` unexpected failure.
-
-## Documentation
-
-- [references/architecture.md](codex-deepseek-router/references/architecture.md) — component picture
-- [references/routing-policy.md](codex-deepseek-router/references/routing-policy.md) — Flash/Pro + FAST/REACT/SPEC/DEEP
-- [references/multimodal.md](codex-deepseek-router/references/multimodal.md) — DeepSeek never sees images
-- [references/compatibility.md](codex-deepseek-router/references/compatibility.md) — tested baselines and boundaries
-- [references/security.md](codex-deepseek-router/references/security.md) — data boundary and key handling
-- [docs/architecture.md](docs/architecture.md) — design decisions
-- [docs/troubleshooting.md](docs/troubleshooting.md) — symptom → fix
-- [docs/eval.md](docs/eval.md) — routing and policy evaluation
-- [docs/upstream-reference-map.md](docs/upstream-reference-map.md) — source map for contributors
-
-## Development
+## 开发与验证
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install pytest
+python3 -m venv .venv
+.venv/bin/pip install pytest
 .venv/bin/python -m pytest -q
 ```
 
-The suite covers manager lifecycle and rollback, the handoff protocol
-(claim/consume/quarantine/TTL/cross-role isolation), router contracts,
-schema validation, and credential-leak scanning. CI runs on Windows, macOS
-and Linux across Python 3.9/3.11/3.12. Live DeepSeek calls are intentionally
-not part of CI; run `test --json` manually.
+测试覆盖管理器生命周期与回滚、交接协议、跨角色隔离、路由合同、schema
+校验和凭据泄漏扫描。CI 在 Windows、macOS、Linux 上覆盖 Python
+3.9/3.11/3.12；真实 DeepSeek 调用不进入 CI。
 
-## Acknowledgements
-
-This project stands on work shared openly by the following projects:
+## 致谢
 
 - [oil-oil/codex-deepseek-subagent](https://github.com/oil-oil/codex-deepseek-subagent)
-  established the foundation for the manager CLI, atomic configuration
-  transactions and rollback, system credential storage, Codex desktop runtime
-  discovery, and native subagent verification. Its clear Skill-first install
-  flow also inspired this README's quick start.
+  奠定了管理器、事务回滚、系统凭据、运行时发现和原生验收的基础。
 - [Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent)
-  provided the plaintext `SubagentStart` handoff transport that was adapted
-  for two roles, typed packets, TTL recovery, and cross-platform locking.
+  提供了明文 `SubagentStart` 交接传输的基础实现。
 - [yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)
-  inspired the bounded, task-aware reasoning policies used here. This project
-  re-expresses those ideas as FAST / REACT / SPEC / DEEP decision contracts
-  for the Codex parent rather than copying DSH runtime assumptions.
+  启发了有边界、任务感知的推理策略路由。
 
-Thank you to their authors and contributors for publishing the implementation,
-experiments, and design reasoning that made this project possible. Exact
-adaptations and license notices are documented in [NOTICE.md](NOTICE.md) and
-[docs/upstream-reference-map.md](docs/upstream-reference-map.md).
+感谢这些项目的作者与贡献者公开实现、实验和设计推理。精确的代码适配、来源
+映射与许可证说明见 [NOTICE.md](NOTICE.md) 和
+[上游来源映射](docs/upstream-reference-map.md)。
 
-## License
+## 许可
 
-MIT — see [LICENSE](LICENSE).
+MIT — 见 [LICENSE](LICENSE)。
