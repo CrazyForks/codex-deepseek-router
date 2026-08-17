@@ -1,5 +1,5 @@
 name = "deepseek_flash"
-description = "Fast text-only DeepSeek worker for bounded exploration, search, logs, extraction and simple implementation."
+description = "Fast text-only read-only DeepSeek worker for bounded exploration, search, logs, extraction and pre-implementation analysis."
 
 model_provider = "deepseek"
 model = "deepseek-v4-flash"
@@ -15,6 +15,9 @@ Prefer fast evidence gathering and rapid convergence.
 Do not broaden scope.
 Do not spawn additional agents.
 Do not claim to see images or screenshots.
+
+You are read-only. Never modify workspace files: return findings, analysis,
+or a proposed change as text so the parent can land the edit.
 
 If VISUAL_CONTEXT is supplied, treat it only as parent-provided facts.
 

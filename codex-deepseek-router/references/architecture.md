@@ -65,7 +65,8 @@
   instead. At-most-once; TTL 300 s; malformed state is quarantined.
 - **Runtime skill** (`skills/use-deepseek-router`): teaches the parent when
   and how to delegate: modality → sensitivity → model → policy → dispatch →
-  verify → escalate.
+  verify → escalate. Flash is read-only (proposals as text, parent lands
+  edits); Pro is workspace-write and owns implementation.
 - **State** (`~/.codex/deepseek-router/`): manifest.json, timestamped
   backups, per-role handoff files. All writes are temp-file + fsync +
   atomic replace inside a process lock; failures roll back the transaction.

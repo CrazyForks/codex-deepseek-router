@@ -70,9 +70,9 @@ Codex 始终是父 Agent，由它决策；`use-deepseek-router` Skill 提供决�
 - **先看模态**：纯文本直接交给 DeepSeek；可翻译的视觉输入由父 Agent 先
   看，写成 Visual Context Packet；关键视觉判断永远留在父 Agent。
 - **Flash**（`deepseek_flash`）：搜索、枚举、日志、抽取、代码地图、大
-  量阅读、简单明确的实现。
+  量阅读，以及只读的修改提案——它永不改文件，落地由父 Agent（或 Pro）完成。
 - **Pro**（`deepseek_pro`）：根因、架构、并发、安全、跨模块推理、复杂
-  评审、困难实现。
+  评审与实现。
 - **策略**：FAST / REACT / SPEC / DEEP，都带收敛约束。
 - **升级**：Flash 返回 `ESCALATE_TO_PRO` 并附 Evidence Packet，Pro 从证据
   出发，不重新扫库。

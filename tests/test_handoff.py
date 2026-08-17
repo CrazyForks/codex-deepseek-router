@@ -175,7 +175,7 @@ def test_expired_pending_can_be_replaced(handoff_dir):
 def test_malformed_pending_is_refused(handoff_dir):
     handoff.pending_path(handoff_dir, FLASH).parent.mkdir(parents=True, exist_ok=True)
     handoff.pending_path(handoff_dir, FLASH).write_text("{not json")
-    with pytest.raises(handoff.HandoffBusy):
+    with pytest.raises(handoff.HandoffCorrupt):
         handoff.stage(handoff_dir, agent_type=FLASH, assignment="x", policy="FAST", modality="TEXT_ONLY")
 
 
@@ -228,7 +228,7 @@ def test_pro_cannot_claim_flash_assignment(handoff_dir):
 def test_expired_assignment_not_delivered(handoff_dir):
     envelope = expire(write_pending(handoff_dir, FLASH))
     handoff.pending_path(handoff_dir, FLASH).write_text(json.dumps(envelope))
-    with pytest.raises(handoff.HandoffMissing):
+    with pytest.raises(handoff.HandoffExpired):
         with handoff.state_lock(handoff_dir, FLASH):
             handoff.claim_pending(handoff_dir, FLASH, "agent-1")
     assert not handoff.pending_path(handoff_dir, FLASH).exists()
@@ -237,7 +237,7 @@ def test_expired_assignment_not_delivered(handoff_dir):
 def test_malformed_pending_is_quarantined_on_claim(handoff_dir):
     handoff.pending_path(handoff_dir, FLASH).parent.mkdir(parents=True, exist_ok=True)
     handoff.pending_path(handoff_dir, FLASH).write_text("{broken")
-    with pytest.raises(handoff.HandoffMissing):
+    with pytest.raises(handoff.HandoffMalformed):
         with handoff.state_lock(handoff_dir, FLASH):
             handoff.claim_pending(handoff_dir, FLASH, "agent-1")
     assert handoff.failed_files(handoff_dir, FLASH)
@@ -246,7 +246,7 @@ def test_malformed_pending_is_quarantined_on_claim(handoff_dir):
 def test_quarantined_state_blocks_stage(handoff_dir):
     handoff.pending_path(handoff_dir, FLASH).parent.mkdir(parents=True, exist_ok=True)
     handoff.pending_path(handoff_dir, FLASH).write_text("{broken")
-    with pytest.raises(handoff.HandoffMissing):
+    with pytest.raises(handoff.HandoffMalformed):
         with handoff.state_lock(handoff_dir, FLASH):
             handoff.claim_pending(handoff_dir, FLASH, "agent-1")
     with pytest.raises(handoff.HandoffBusy):
@@ -423,6 +423,27 @@ def test_cli_hook_missing_pending(handoff_dir):
     assert proc.returncode == 10
 
 
+def test_cli_hook_expired_pending_exits_6(handoff_dir):
+    envelope = expire(write_pending(handoff_dir, FLASH))
+    handoff.pending_path(handoff_dir, FLASH).write_text(json.dumps(envelope))
+    hook_input = json.dumps(
+        {"hook_event_name": "SubagentStart", "agent_type": FLASH, "agent_id": "x"}
+    )
+    proc = run_cli("--mode", "hook", "--state-directory", str(handoff_dir), stdin_text=hook_input)
+    assert proc.returncode == 6
+
+
+def test_cli_hook_malformed_pending_exits_5(handoff_dir):
+    handoff.pending_path(handoff_dir, FLASH).parent.mkdir(parents=True, exist_ok=True)
+    handoff.pending_path(handoff_dir, FLASH).write_text("{broken")
+    hook_input = json.dumps(
+        {"hook_event_name": "SubagentStart", "agent_type": FLASH, "agent_id": "x"}
+    )
+    proc = run_cli("--mode", "hook", "--state-directory", str(handoff_dir), stdin_text=hook_input)
+    assert proc.returncode == 5
+    assert handoff.failed_files(handoff_dir, FLASH)
+
+
 def test_cli_json_envelope_mode(handoff_dir):
     envelope = handoff.new_envelope(
         agent_type=PRO,
@@ -447,3 +468,40 @@ def test_cli_invalid_ttl(handoff_dir):
         "--state-directory", str(handoff_dir), stdin_text="x",
     )
     assert proc.returncode == 8
+
+
+# ---------------------------------------------------------------------------
+# Python / PowerShell protocol parity (no pwsh on CI: static conformance)
+# ---------------------------------------------------------------------------
+
+
+def test_python_and_powershell_protocol_parity():
+    import re
+
+    package = Path(__file__).resolve().parents[1] / "codex-deepseek-router"
+    py_source = (package / "hooks" / "plaintext_handoff.py").read_text()
+    ps1_source = (package / "hooks" / "plaintext-handoff.ps1").read_text()
+
+    for role in ("deepseek_flash", "deepseek_pro"):
+        assert role in py_source and role in ps1_source
+    for token in (
+        "FAST", "REACT", "SPEC", "DEEP",
+        "TEXT_ONLY", "VISION_TRANSLATABLE", "VISION_CRITICAL",
+    ):
+        assert token in py_source and token in ps1_source
+    for field in (
+        "schema", "handoff_id", "agent_type", "created_at", "expires_at",
+        "assignment", "policy", "modality", "visual_context", "evidence_packet",
+    ):
+        assert field in py_source and field in ps1_source
+    for shape in (".pending.json", ".claimed.", ".failed.", ".lock"):
+        assert shape in py_source and shape in ps1_source
+
+    expected_codes = {"2", "3", "4", "5", "6", "8", "9", "10", "11", "12", "13"}
+    py_exit_codes = set(re.findall(r"fail\([^,]+,\s*(\d+)\)", py_source))
+    # The PowerShell script funnels every failure through Stop-Handoff,
+    # which calls `exit $Code`; collect the literal code arguments instead.
+    ps1_exit_codes = set(re.findall(r'Stop-Handoff "[^"]*"\s+(\d+)', ps1_source))
+    ps1_exit_codes |= set(re.findall(r"exit (\d+)", ps1_source))
+    assert expected_codes <= py_exit_codes
+    assert expected_codes <= ps1_exit_codes

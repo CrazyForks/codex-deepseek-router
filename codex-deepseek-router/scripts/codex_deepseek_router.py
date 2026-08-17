@@ -206,7 +206,11 @@ class Paths:
         return self.codex_home / "skills" / "use-deepseek-router"
 
     def agent_path(self, agent_type: str) -> Path:
-        return self.flash_agent if agent_type == FLASH_ROLE else self.pro_agent
+        if agent_type == FLASH_ROLE:
+            return self.flash_agent
+        if agent_type == PRO_ROLE:
+            return self.pro_agent
+        raise ValueError(f"unknown agent type: {agent_type}")
 
 
 @dataclass(frozen=True)
@@ -222,8 +226,8 @@ AGENT_SPECS = {
         role=FLASH_ROLE,
         model=FLASH_MODEL,
         description=(
-            "Fast text-only DeepSeek worker for bounded exploration, search, "
-            "logs, extraction and simple implementation."
+            "Fast text-only read-only DeepSeek worker for bounded exploration, "
+            "search, logs, extraction and pre-implementation analysis."
         ),
         sandbox_mode="read-only",
     ),
@@ -525,25 +529,116 @@ def _macos_read_credential() -> Optional[str]:
     return proc.stdout.strip() or None
 
 
+_K_CF_STRING_ENCODING_UTF8 = 0x08000100
+_ERR_SEC_SUCCESS = 0
+_ERR_SEC_DUPLICATE_ITEM = -25299
+
+
+def _macos_security_framework():
+    """Load Security.framework / CoreFoundation via ctypes.
+
+    Used for the credential write path so the secret never enters argv (the
+    `security` CLI's `-w` option would, and Apple marks that usage unsafe).
+    """
+    import ctypes
+    from ctypes import c_void_p
+
+    security = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
+    core_foundation = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+
+    security.SecItemAdd.argtypes = [c_void_p, ctypes.POINTER(c_void_p)]
+    security.SecItemAdd.restype = ctypes.c_int32
+    security.SecItemDelete.argtypes = [c_void_p]
+    security.SecItemDelete.restype = ctypes.c_int32
+
+    core_foundation.CFStringCreateWithCString.argtypes = [c_void_p, ctypes.c_char_p, ctypes.c_int32]
+    core_foundation.CFStringCreateWithCString.restype = c_void_p
+    core_foundation.CFDataCreate.argtypes = [c_void_p, c_void_p, ctypes.c_long]
+    core_foundation.CFDataCreate.restype = c_void_p
+    core_foundation.CFDictionaryCreate.argtypes = [
+        c_void_p,
+        ctypes.POINTER(c_void_p),
+        ctypes.POINTER(c_void_p),
+        ctypes.c_long,
+        c_void_p,
+        c_void_p,
+    ]
+    core_foundation.CFDictionaryCreate.restype = c_void_p
+    core_foundation.CFRelease.argtypes = [c_void_p]
+    core_foundation.CFRelease.restype = None
+    return security, core_foundation, ctypes
+
+
 def _macos_store_credential(secret: str) -> None:
-    proc = subprocess.run(
-        [
-            "/usr/bin/security",
-            "add-generic-password",
-            "-U",
-            "-a",
-            credential_account(),
-            "-s",
-            CREDENTIAL_TARGET,
-            "-w",
-            secret,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise ManagerError("credential_write_failed", "Could not write the API key to macOS Keychain.")
+    """Store the API key through SecItemAdd. The secret never enters argv."""
+    try:
+        security, cf, ctypes = _macos_security_framework()
+    except OSError as exc:
+        raise ManagerError(
+            "credential_write_failed",
+            f"Could not load Security.framework: {exc}",
+        ) from exc
+
+    def cf_string(value: str):
+        return cf.CFStringCreateWithCString(None, value.encode("utf-8"), _K_CF_STRING_ENCODING_UTF8)
+
+    def cf_data(value: bytes):
+        buffer = ctypes.create_string_buffer(value)
+        return cf.CFDataCreate(None, buffer, len(value))
+
+    def dictionary(entries):
+        keys = (ctypes.c_void_p * len(entries))(*[key for key, _ in entries])
+        values = (ctypes.c_void_p * len(entries))(*[value for _, value in entries])
+        return cf.CFDictionaryCreate(None, keys, values, len(entries), None, None)
+
+    class_ref = cf_string("class")
+    generic_ref = cf_string("genp")
+    service_ref = cf_string("svce")
+    target_ref = cf_string(CREDENTIAL_TARGET)
+    account_ref = cf_string("acct")
+    user_ref = cf_string(credential_account())
+    value_ref = cf_string("v_Data")
+    secret_ref = cf_data(secret.encode("utf-8"))
+    refs = [class_ref, generic_ref, service_ref, target_ref, account_ref, user_ref, value_ref, secret_ref]
+    try:
+        query = dictionary([(class_ref, generic_ref), (service_ref, target_ref), (account_ref, user_ref)])
+        try:
+            item = dictionary(
+                [
+                    (class_ref, generic_ref),
+                    (service_ref, target_ref),
+                    (account_ref, user_ref),
+                    (value_ref, secret_ref),
+                ]
+            )
+            try:
+                status = security.SecItemAdd(item, None)
+            finally:
+                cf.CFRelease(item)
+            if status == _ERR_SEC_DUPLICATE_ITEM:
+                security.SecItemDelete(query)
+                item = dictionary(
+                    [
+                        (class_ref, generic_ref),
+                        (service_ref, target_ref),
+                        (account_ref, user_ref),
+                        (value_ref, secret_ref),
+                    ]
+                )
+                try:
+                    status = security.SecItemAdd(item, None)
+                finally:
+                    cf.CFRelease(item)
+            if status != _ERR_SEC_SUCCESS:
+                raise ManagerError(
+                    "credential_write_failed",
+                    f"SecItemAdd failed (status {status}).",
+                )
+        finally:
+            cf.CFRelease(query)
+    finally:
+        for ref in refs:
+            cf.CFRelease(ref)
 
 
 def _macos_remove_credential() -> bool:
@@ -699,6 +794,9 @@ Do not broaden scope.
 Do not spawn additional agents.
 Do not claim to see images or screenshots.
 
+You are read-only. Never modify workspace files: return findings, analysis,
+or a proposed change as text so the parent can land the edit.
+
 If VISUAL_CONTEXT is supplied, treat it only as parent-provided facts.
 
 If the task requires difficult cross-module reasoning, concurrency analysis,
@@ -804,7 +902,7 @@ def catalog_payload() -> Dict[str, Any]:
             entry(
                 FLASH_MODEL,
                 "DeepSeek V4 Flash",
-                "Fast text-only DeepSeek model for bounded exploration, search, logs, extraction and simple implementation.",
+                "Fast text-only DeepSeek model for bounded exploration, search, logs, extraction and pre-implementation analysis.",
             ),
             entry(
                 PRO_MODEL,
@@ -869,27 +967,33 @@ def default_manifest(original_parent_model: str, original_parent_provider: Optio
 # ---------------------------------------------------------------------------
 
 
-def make_backup(paths: Paths, extra_files: Optional[List[Path]] = None) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    backup = paths.backups_dir / stamp
-    backup.mkdir(parents=True, exist_ok=False)
-    tracked = [paths.config, paths.catalog, paths.flash_agent, paths.pro_agent, paths.hooks_config, paths.manifest]
-    tracked.extend(extra_files or [])
-    for source in tracked:
-        if source.is_file():
-            shutil.copy2(source, backup / source.name)
-    return backup
-
-
-def restore_backup(paths: Paths, backup: Path) -> None:
-    for target in (
+def tracked_files(paths: Paths) -> List[Path]:
+    """Every file the manager may write; all of them join the transaction snapshot."""
+    return [
         paths.config,
         paths.catalog,
         paths.flash_agent,
         paths.pro_agent,
         paths.hooks_config,
         paths.manifest,
-    ):
+        paths.hooks_install_dir / "plaintext_handoff.py",
+        paths.hooks_install_dir / "plaintext-handoff.ps1",
+        paths.runtime_skill_dir / "SKILL.md",
+    ]
+
+
+def make_backup(paths: Paths) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = paths.backups_dir / stamp
+    backup.mkdir(parents=True, exist_ok=False)
+    for source in tracked_files(paths):
+        if source.is_file():
+            shutil.copy2(source, backup / source.name)
+    return backup
+
+
+def restore_backup(paths: Paths, backup: Path) -> None:
+    for target in tracked_files(paths):
         source = backup / target.name
         if source.is_file():
             atomic_write(target, source.read_bytes(), mode=0o600)
@@ -1121,13 +1225,26 @@ def merge_hook_config(existing: Dict[str, Any], ours: Dict[str, Any], paths: Pat
     return merged, False
 
 
-def install_hook_files(paths: Paths) -> None:
+def install_hook_files(paths: Paths, manifest: Dict[str, Any]) -> None:
+    """Copy the handoff scripts into the codex home. Foreign files are conflicts."""
     source_dir = package_root() / "hooks"
     paths.hooks_install_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("plaintext_handoff.py", "plaintext-handoff.ps1"):
+    for name, hash_key in (
+        ("plaintext_handoff.py", "hook_script_py"),
+        ("plaintext-handoff.ps1", "hook_script_ps1"),
+    ):
         source = source_dir / name
-        if source.is_file():
-            atomic_write(paths.hooks_install_dir / name, source.read_bytes(), mode=0o644)
+        target = paths.hooks_install_dir / name
+        if not source.is_file():
+            continue
+        data = source.read_bytes()
+        if target.is_file() and not _assert_writable_target(target, data, manifest, hash_key):
+            raise ManagerError(
+                "conflict",
+                f"Existing hook script differs from the router-managed target: {target}",
+                {"path": str(target)},
+            )
+        atomic_write(target, data, mode=0o644)
 
 
 def install_hook_config(paths: Paths, manifest: Dict[str, Any]) -> Tuple[bool, bool]:
@@ -1142,7 +1259,7 @@ def install_hook_config(paths: Paths, manifest: Dict[str, Any]) -> Tuple[bool, b
                 "config.toml already contains inline hook configuration. This router does not "
                 "merge into inline hook tables; migrate them to hooks.json first or review /hooks.",
             )
-    install_hook_files(paths)
+    install_hook_files(paths, manifest)
     ours = our_hook_config(paths)
     existing: Dict[str, Any] = {}
     if paths.hooks_config.is_file():
@@ -1180,6 +1297,58 @@ def hook_trusted(paths: Paths) -> bool:
     ps1 = paths.hooks_install_dir / "plaintext-handoff.ps1"
     text = paths.config.read_text()
     return str(script) in text or str(ps1) in text
+
+
+def hook_entry_present(paths: Paths) -> bool:
+    """True when hooks.json still contains a router-equivalent SubagentStart entry."""
+    if not paths.hooks_config.is_file():
+        return False
+    try:
+        config = json.loads(paths.hooks_config.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    entries = (config.get("hooks") or {}).get("SubagentStart") if isinstance(config, dict) else None
+    if not isinstance(entries, list):
+        return False
+    ours = our_hook_config(paths)["hooks"]["SubagentStart"][0]
+    return any(
+        isinstance(entry, dict)
+        and entry.get("matcher") == ours["matcher"]
+        and (_matcher_equal(entry, ours) or _entry_is_ours(entry, paths))
+        for entry in entries
+    )
+
+
+def hook_files_installed(paths: Paths) -> bool:
+    return (
+        (paths.hooks_install_dir / "plaintext_handoff.py").is_file()
+        and (paths.hooks_install_dir / "plaintext-handoff.ps1").is_file()
+        and (paths.runtime_skill_dir / "SKILL.md").is_file()
+    )
+
+
+def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[str, bool], bool]:
+    """Install/refresh every managed asset. Returns (changed, hook_adopted)."""
+    changed: Dict[str, bool] = {}
+    changed["catalog"] = install_catalog(paths, manifest)
+    changed["flash_agent"] = install_agent(paths, AGENT_SPECS[FLASH_ROLE], manifest)
+    changed["pro_agent"] = install_agent(paths, AGENT_SPECS[PRO_ROLE], manifest)
+    changed["runtime_skill"] = install_runtime_skill(paths, manifest)
+    hook_changed, hook_adopted = install_hook_config(paths, manifest)
+    changed["hook"] = hook_changed
+    return changed, hook_adopted
+
+
+def compute_asset_hashes(paths: Paths) -> Dict[str, str]:
+    return {
+        "flash_agent": sha256_text_file(paths.flash_agent),
+        "pro_agent": sha256_text_file(paths.pro_agent),
+        "catalog": sha256_bytes(paths.catalog.read_bytes()),
+        "runtime_skill": sha256_text_file(paths.runtime_skill_dir / "SKILL.md"),
+        "hook_config": sha256_text_file(paths.hooks_config),
+        "hook_script_py": sha256_text_file(paths.hooks_install_dir / "plaintext_handoff.py"),
+        "hook_script_ps1": sha256_text_file(paths.hooks_install_dir / "plaintext-handoff.ps1"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1237,7 +1406,9 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
         "pro_agent": agent_status(paths, manifest, AGENT_SPECS[PRO_ROLE]),
         "catalog": catalog_status(paths),
     }
-    hooks_installed = paths.hooks_config.is_file()
+    entry_present = hook_entry_present(paths)
+    scripts_present = hook_files_installed(paths)
+    hooks_installed = entry_present and scripts_present
     trusted = hook_trusted(paths)
     errors: List[str] = []
 
@@ -1254,17 +1425,39 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
     if paths.backups_dir.is_dir():
         backup_count = sum(1 for entry in paths.backups_dir.iterdir() if entry.is_dir())
 
+    last_test = manifest.get("last_test")
+    test_evidence = bool(
+        last_test and last_test.get("flash") and last_test.get("pro")
+    )
+    # Live-test evidence stays valid only while the managed files it tested
+    # are still byte-identical to the installed versions.
+    hashes = manifest.get("hashes") or {}
+    evidence_fresh = test_evidence and all(
+        _file_is_ours(target, manifest, key)
+        for key, target in (
+            ("flash_agent", paths.flash_agent),
+            ("pro_agent", paths.pro_agent),
+            ("catalog", paths.catalog),
+            ("runtime_skill", paths.runtime_skill_dir / "SKILL.md"),
+            ("hook_script_py", paths.hooks_install_dir / "plaintext_handoff.py"),
+            ("hook_script_ps1", paths.hooks_install_dir / "plaintext-handoff.ps1"),
+        )
+    ) and hook_entry_present(paths)
+
     if installed:
-        if manifest.get("disabled"):
-            status = "disabled"
-        elif (
+        static_ok = (
             checks["flash_agent"]["valid"]
             and checks["pro_agent"]["valid"]
             and checks["catalog"]["registered"]
             and hooks_installed
             and credential_present()
             and parent_unchanged
-        ):
+        )
+        if manifest.get("disabled"):
+            status = "disabled"
+        elif static_ok and evidence_fresh:
+            status = "ready"
+        elif static_ok:
             status = "configured"
         else:
             status = "partial"
@@ -1297,21 +1490,23 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
         credential={"backend": credential_backend(), "present": credential_present()},
         hook={
             "installed": hooks_installed,
+            "entry_present": entry_present,
+            "files_installed": scripts_present,
             "trusted": trusted,
             "review_required": installed and hooks_installed and not trusted,
         },
         hook_trusted=trusted,
-        transport_mode=manifest.get("transport_mode", TransportMode.PLAINTEXT_HOOK.value),
+        transport_mode=choose_transport(False, hooks_installed).value,
         catalog=checks["catalog"],
         backup={"count": backup_count},
-        last_test=manifest.get("last_test"),
+        last_test=last_test,
         errors=errors,
     )
 
 
 def validate_static_configuration(paths: Paths) -> None:
     status = static_status(paths)
-    if status["status"] not in {"configured", "disabled"}:
+    if status["status"] not in {"configured", "disabled", "ready"}:
         problems = [
             name for name, value in status["agents"].items() if not value["valid"]
         ]
@@ -1369,16 +1564,8 @@ def setup(
                 "parent_model_unconfigured",
                 "config.toml has no explicit top-level non-DeepSeek parent model.",
             )
-        # 4. Catalog (dual registration)
-        changed["catalog"] = install_catalog(paths, previous)
-        # 5. Both agents
-        changed["flash_agent"] = install_agent(paths, AGENT_SPECS[FLASH_ROLE], previous)
-        changed["pro_agent"] = install_agent(paths, AGENT_SPECS[PRO_ROLE], previous)
-        # 6. Runtime routing skill
-        changed["runtime_skill"] = install_runtime_skill(paths, previous)
-        # 7. Plaintext handoff hook (never forges trust)
-        hook_changed, hook_adopted = install_hook_config(paths, previous)
-        changed["hook"] = hook_changed
+        # 4-7. Managed assets: catalog, both agents, runtime skill, handoff hook.
+        changed, hook_adopted = apply_managed_assets(paths, previous)
         adopted["hook"] = hook_adopted
 
         new_manifest = default_manifest(snapshot["parent_model"], snapshot["parent_provider"])
@@ -1393,13 +1580,7 @@ def setup(
             "catalog": adopted["catalog"],
             "hook_config": hook_config_preexisted,
         }
-        new_manifest["hashes"] = {
-            "flash_agent": sha256_text_file(paths.flash_agent),
-            "pro_agent": sha256_text_file(paths.pro_agent),
-            "catalog": sha256_bytes(paths.catalog.read_bytes()),
-            "runtime_skill": sha256_text_file(paths.runtime_skill_dir / "SKILL.md"),
-            "hook_config": sha256_text_file(paths.hooks_config),
-        }
+        new_manifest["hashes"] = compute_asset_hashes(paths)
         write_manifest(paths, new_manifest)
         validate_static_configuration(paths)
     except Exception:
@@ -1445,23 +1626,11 @@ def repair(paths: Paths, codex_bin: str) -> Dict[str, Any]:
     manifest["disabled"] = False
     backup = make_backup(paths)
     try:
-        changed: Dict[str, bool] = {}
-        changed["catalog"] = install_catalog(paths, manifest)
-        changed["flash_agent"] = install_agent(paths, AGENT_SPECS[FLASH_ROLE], manifest)
-        changed["pro_agent"] = install_agent(paths, AGENT_SPECS[PRO_ROLE], manifest)
-        changed["runtime_skill"] = install_runtime_skill(paths, manifest)
-        hook_changed, hook_adopted = install_hook_config(paths, manifest)
-        changed["hook"] = hook_changed
+        changed, hook_adopted = apply_managed_assets(paths, manifest)
         manifest["adopted_existing"] = manifest.get("adopted_existing", {})
         if hook_adopted:
             manifest["adopted_existing"]["hook"] = True
-        manifest["hashes"] = {
-            "flash_agent": sha256_text_file(paths.flash_agent),
-            "pro_agent": sha256_text_file(paths.pro_agent),
-            "catalog": sha256_bytes(paths.catalog.read_bytes()),
-            "runtime_skill": sha256_text_file(paths.runtime_skill_dir / "SKILL.md"),
-            "hook_config": sha256_text_file(paths.hooks_config),
-        }
+        manifest["hashes"] = compute_asset_hashes(paths)
         # Parent model may have changed (user upgraded); refresh the recorded snapshot.
         snapshot = parent_config_snapshot(paths)
         manifest["original"] = {
@@ -1552,6 +1721,8 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
         ("pro_agent", paths.pro_agent),
         ("catalog", paths.catalog),
         ("runtime_skill", paths.runtime_skill_dir / "SKILL.md"),
+        ("hook_script_py", paths.hooks_install_dir / "plaintext_handoff.py"),
+        ("hook_script_ps1", paths.hooks_install_dir / "plaintext-handoff.ps1"),
     ):
         if target.is_file() and not _file_is_ours(target, manifest, key):
             raise ManagerError(
@@ -1821,7 +1992,7 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
 
 def run_tests(paths: Paths, codex_bin: str) -> Dict[str, Any]:
     status = static_status(paths, codex_bin)
-    if status["status"] != "configured":
+    if status["status"] not in {"configured", "ready"}:
         raise ManagerError("not_configured", "Static configuration is incomplete; live tests cannot run.", status)
     if not hook_trusted(paths):
         raise ManagerError(

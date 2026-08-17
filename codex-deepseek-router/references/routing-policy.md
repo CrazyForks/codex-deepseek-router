@@ -7,12 +7,15 @@ the decision contract. There is no keyword-scoring router.
 
 ### deepseek_flash (deepseek-v4-flash)
 
-Fast bounded worker: repository search, enumeration, logs, test-output
-analysis, extraction, code mapping, high-volume reading, unambiguous small
-implementations.
+Fast bounded read-only worker: repository search, enumeration, logs,
+test-output analysis, extraction, code mapping, high-volume reading, and
+pre-implementation analysis. Flash never edits files — it returns findings,
+analysis or a proposed change as text, and the parent (or Pro) lands the
+edit.
 
 Examples: "Find all callers of create_job", "Find the earliest anomaly in
-this 5000-line test log".
+this 5000-line test log", "Propose the exact diff for renaming tmp to
+buffer in this function".
 
 ### deepseek_pro (deepseek-v4-pro)
 
@@ -34,7 +37,8 @@ specialization, context isolation, cost, or quality.
 - **FAST** — inspect the minimum needed → answer → stop. Search,
   extraction, simple investigation. Flash.
 - **REACT** — understand → implement → test → fix → converge. Clear
-  requirements, clear path. Flash for simple work, Pro for complex.
+  requirements, clear path. Pro for implementation; Flash may prepare the
+  change as a read-only proposal (diff or plan) for the parent to land.
 - **SPEC** — inspect → trace → hypothesis → evidence → root cause →
   smallest fix → verify. Bugs, reviews, unexpected behavior. Pro (Flash may
   run a SPEC-Lite exploration).

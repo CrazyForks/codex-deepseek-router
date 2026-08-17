@@ -44,7 +44,10 @@ Choose `deepseek_flash` for:
 - extraction
 - code mapping
 - high-volume reading
-- bounded simple implementation
+- pre-implementation analysis and change proposals (diffs/plans as text)
+
+`deepseek_flash` is read-only: it never edits files. The parent lands any
+change it proposes, or hands the implementation to `deepseek_pro`.
 
 Choose `deepseek_pro` for:
 
@@ -55,15 +58,15 @@ Choose `deepseek_pro` for:
 - security
 - cross-module reasoning
 - complex review
-- difficult implementation
+- implementation (simple or difficult)
 
 Do not delegate trivial work whose handoff cost exceeds its value.
 
 ## Step 3 — Policy
 
 - `FAST`: minimum investigation -> result -> stop. (Flash)
-- `REACT`: understand -> implement -> test -> fix -> converge. (Flash for
-  simple tasks, Pro for complex implementation)
+- `REACT`: understand -> implement -> test -> fix -> converge. (Pro for
+  implementation; Flash may prepare the change as a read-only proposal)
 - `SPEC`: inspect -> trace -> hypothesis -> evidence -> root cause ->
   smallest fix -> verify. (Pro; Flash may run a SPEC-Lite exploration)
 - `DEEP`: system model -> invariants -> failure modes -> alternatives ->

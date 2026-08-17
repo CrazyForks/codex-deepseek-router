@@ -77,9 +77,10 @@ Codex stays the parent and decides. The `use-deepseek-router` skill guides:
   described by the parent as a Visual Context Packet; critical visual
   judgment stays in the parent.
 - **Flash** (`deepseek_flash`) for search, enumeration, logs, extraction,
-  code mapping, high-volume reading, simple implementations.
+  code mapping, high-volume reading, and read-only change proposals — it
+  never edits files; the parent (or Pro) lands the change.
 - **Pro** (`deepseek_pro`) for root cause, architecture, concurrency,
-  security, cross-module refactors, hard implementations.
+  security, cross-module refactors, and implementation.
 - **Policy**: FAST / REACT / SPEC / DEEP, with convergence built in.
 - **Escalation**: Flash returns `ESCALATE_TO_PRO` with an evidence packet;
   Pro starts from that evidence instead of re-scanning the repository.

@@ -7,6 +7,7 @@ Lifecycle tests run against a fake codex home and never touch the real
 import json
 import threading
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -51,6 +52,14 @@ def test_agents_are_independent(tmp_path):
     assert paths.pro_agent.name == "deepseek-pro.toml"
 
 
+def test_agent_path_rejects_unknown_role(tmp_path):
+    paths = manager.Paths(tmp_path)
+    assert paths.agent_path("deepseek_flash") == paths.flash_agent
+    assert paths.agent_path("deepseek_pro") == paths.pro_agent
+    with pytest.raises(ValueError):
+        paths.agent_path("some_random_role")
+
+
 def test_supported_roles_cover_both_models():
     assert manager.SUPPORTED_ROLES == {
         manager.FLASH_ROLE: manager.FLASH_MODEL,
@@ -80,6 +89,20 @@ def test_agent_toml_never_contains_api_key_value():
     for role in manager.SUPPORTED_ROLES:
         text = manager.agent_toml_text(manager.AGENT_SPECS[role])
         assert "sk-" not in text
+
+
+def test_flash_is_read_only_and_pro_owns_implementation():
+    flash = manager.agent_toml_text(manager.AGENT_SPECS[manager.FLASH_ROLE])
+    pro = manager.agent_toml_text(manager.AGENT_SPECS[manager.PRO_ROLE])
+    assert 'sandbox_mode = "read-only"' in flash
+    assert 'sandbox_mode = "workspace-write"' in pro
+    assert "Never modify workspace files" in flash
+    assert "read-only" in flash.split("developer_instructions")[0]
+    assert "You are read-only" not in pro
+    # The repo-shipped portable template carries the same contract.
+    template = (Path(__file__).resolve().parents[1] / "codex-deepseek-router" / "agents" / "deepseek-flash.toml").read_text()
+    assert "Never modify workspace files" in template
+    assert 'sandbox_mode = "read-only"' in template
 
 
 def test_catalog_registers_both_models():
@@ -269,6 +292,38 @@ def test_setup_rolls_back_on_conflict(paths, fake_codex, no_credentials):
     assert paths.config.read_text() == before
 
 
+def test_setup_conflicts_on_foreign_hook_script(paths, fake_codex, no_credentials):
+    paths.hooks_install_dir.mkdir(parents=True)
+    (paths.hooks_install_dir / "plaintext_handoff.py").write_text("# foreign script\n")
+    with pytest.raises(manager.ManagerError) as exc:
+        manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    assert exc.value.code == "conflict"
+    # The foreign script survives untouched; everything else was rolled back.
+    assert (paths.hooks_install_dir / "plaintext_handoff.py").read_text() == "# foreign script\n"
+    assert not (paths.hooks_install_dir / "plaintext-handoff.ps1").exists()
+    assert not paths.flash_agent.exists()
+    assert not paths.catalog.exists()
+    assert not paths.manifest.exists()
+
+
+def test_setup_rollback_covers_hook_scripts_and_skill(paths, fake_codex, no_credentials):
+    ours = manager.our_hook_config(paths)
+    foreign = json.loads(json.dumps(ours))
+    foreign["hooks"]["SubagentStart"][0]["hooks"][0]["command"] = "echo foreign-hook"
+    paths.hooks_config.write_text(json.dumps(foreign))
+    with pytest.raises(manager.ManagerError) as exc:
+        manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    assert exc.value.code == "conflict"
+    # Assets written before the hooks.json merge conflict must be rolled back too.
+    assert not (paths.hooks_install_dir / "plaintext_handoff.py").exists()
+    assert not (paths.hooks_install_dir / "plaintext-handoff.ps1").exists()
+    assert not (paths.runtime_skill_dir / "SKILL.md").exists()
+    assert not paths.flash_agent.exists()
+    assert not paths.catalog.exists()
+    # The foreign hooks.json is byte-identical after rollback.
+    assert json.loads(paths.hooks_config.read_text()) == foreign
+
+
 def test_setup_adopts_identical_catalog(paths, fake_codex, no_credentials):
     paths.catalog.write_bytes(
         (json.dumps(manager.catalog_payload(), ensure_ascii=False, indent=2) + "\n").encode()
@@ -310,6 +365,97 @@ def test_setup_merges_unrelated_hooks(paths, fake_codex, no_credentials):
     hooks = json.loads(paths.hooks_config.read_text())
     assert "UserPromptSubmit" in hooks["hooks"]
     assert "SubagentStart" not in hooks["hooks"]
+
+
+def test_status_requires_full_hook_invariant(paths, fake_codex, no_credentials):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    assert manager.static_status(paths, fake_codex)["status"] == "configured"
+
+    # Externally remove the router entry but keep the file (review finding P2-4).
+    config = json.loads(paths.hooks_config.read_text())
+    config["hooks"].pop("SubagentStart", None)
+    paths.hooks_config.write_text(json.dumps(config))
+    status = manager.static_status(paths, fake_codex)
+    assert status["status"] == "partial"
+    assert status["hook"]["entry_present"] is False
+
+    # Repair restores the entry.
+    manager.repair(paths, fake_codex)
+    assert manager.static_status(paths, fake_codex)["status"] == "configured"
+
+    # Missing installed scripts must also degrade the status.
+    (paths.hooks_install_dir / "plaintext_handoff.py").unlink()
+    status = manager.static_status(paths, fake_codex)
+    assert status["status"] == "partial"
+    assert status["hook"]["files_installed"] is False
+
+
+def test_status_ready_after_live_test_and_downgrades_when_modified(
+    paths, fake_codex, no_credentials, trusted, monkeypatch
+):
+    monkeypatch.setattr(manager, "native_spawn_smoke", _fake_smoke)
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    assert manager.static_status(paths, fake_codex)["status"] == "configured"
+
+    manager.run_tests(paths, fake_codex)
+    status = manager.static_status(paths, fake_codex)
+    assert status["status"] == "ready"
+    assert status["last_test"]["flash"]["role"] == "deepseek_flash"
+
+    # A second test run on a ready install is allowed.
+    assert manager.run_tests(paths, fake_codex)["status"] == "ready"
+
+    # Tampering with a tested asset invalidates the evidence.
+    paths.flash_agent.write_text('name = "modified"\n')
+    assert manager.static_status(paths, fake_codex)["status"] == "partial"
+
+
+def test_macos_store_credential_never_uses_subprocess(monkeypatch):
+    """The reviewed issue: the secret must never reach a subprocess argv."""
+    import ctypes
+
+    calls = []
+
+    class FakeCF:
+        def CFStringCreateWithCString(self, alloc, value, encoding):
+            calls.append(("string", bytes(value).decode()))
+            return len(calls) + 100
+
+        def CFDataCreate(self, alloc, buffer, length):
+            calls.append(("data", bytes(buffer)[:length]))
+            return len(calls) + 100
+
+        def CFDictionaryCreate(self, alloc, keys, values, count, kcb, vcb):
+            return len(calls) + 100
+
+        def CFRelease(self, ref):
+            pass
+
+    class FakeSecurity:
+        def __init__(self):
+            self.adds = 0
+
+        def SecItemAdd(self, item, out):
+            self.adds += 1
+            calls.append(("SecItemAdd", self.adds))
+            return -25299 if self.adds == 1 else 0  # duplicate, then success
+
+        def SecItemDelete(self, query):
+            calls.append(("SecItemDelete", None))
+            return 0
+
+    monkeypatch.setattr(manager, "_macos_security_framework", lambda: (FakeSecurity(), FakeCF(), ctypes))
+
+    def _no_subprocess(*args, **kwargs):
+        raise AssertionError("credential write must not spawn subprocesses (argv leak)")
+
+    monkeypatch.setattr(manager.subprocess, "run", _no_subprocess)
+
+    manager._macos_store_credential("sk-test-secret")
+    assert ("data", b"sk-test-secret") in calls
+    assert ("string", "sk-test-secret") not in calls
+    assert [entry for entry in calls if entry[0] == "SecItemAdd"] == [("SecItemAdd", 1), ("SecItemAdd", 2)]
+    assert ("SecItemDelete", None) in calls
 
 
 def test_uninstall_restores_preexisting_catalog(paths, fake_codex, no_credentials):

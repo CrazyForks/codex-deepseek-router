@@ -10,10 +10,13 @@ In `tests/fixtures/`:
 
 | Group | File | Size | Bar |
 |---|---|---|---|
-| A — Flash advantage | `eval-flash-advantage.json` | 20 | ≥ 80% → FLASH |
+| A — Flash advantage | `eval-flash-advantage.json` | 20 | ≥ 80% → FLASH (read-only analysis/proposals) |
 | B — Pro advantage | `eval-pro-advantage.json` | 20 | ≥ 85% → PRO |
 | C — Multimodal | `eval-multimodal.json` | 10 | 10/10 correct `expected_modality` |
 | D — No-delegation | `eval-no-delegation.json` | 10 | 10/10 → NONE |
+
+Flash tasks are read-only by contract (proposals, extraction, mapping); any
+task that edits files belongs to Pro (REACT) or to the parent.
 
 ## Protocol
 

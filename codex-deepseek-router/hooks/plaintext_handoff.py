@@ -57,8 +57,24 @@ class HandoffBusy(RuntimeError):
     pass
 
 
+class HandoffLocked(HandoffBusy):
+    """State transition already in progress (exit code 13, like the PS1)."""
+
+
+class HandoffCorrupt(RuntimeError):
+    """Existing pending state is malformed; refuse to replace it (exit code 9)."""
+
+
 class HandoffMissing(RuntimeError):
     pass
+
+
+class HandoffMalformed(HandoffMissing):
+    """Claimed state was malformed and quarantined (exit code 5)."""
+
+
+class HandoffExpired(HandoffMissing):
+    """Claimed state expired before the child started (exit code 6)."""
 
 
 def state_root(override: Optional[str]) -> pathlib.Path:
@@ -132,7 +148,7 @@ def state_lock(root: pathlib.Path, agent_type: str):
             os.fchmod(descriptor, 0o600)
         lock_file = os.fdopen(descriptor, "a+")
         if not _try_lock_file(lock_file):
-            raise HandoffBusy(
+            raise HandoffLocked(
                 f"A plaintext handoff state transition for {agent_type} is already in progress."
             )
     except HandoffBusy:
@@ -344,14 +360,14 @@ def stage_locked(
         except FileNotFoundError:
             existing = None
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            raise HandoffBusy(
+            raise HandoffCorrupt(
                 f"The existing {agent_type} handoff is malformed. Refusing to replace it."
             )
         if existing is not None:
             try:
                 _, expires_at = validate_envelope(existing)
             except EnvelopeError:
-                raise HandoffBusy(
+                raise HandoffCorrupt(
                     f"The existing {agent_type} handoff has an invalid schema, agent type, "
                     "assignment, or expiry. Refusing to replace it."
                 )
@@ -481,7 +497,7 @@ def claim_pending(
         envelope, expires_at = validate_envelope(envelope)
     except (EnvelopeError, json.JSONDecodeError, OSError, UnicodeDecodeError):
         quarantine_claim(claimed, agent_type, safe_agent_id)
-        raise HandoffMissing(
+        raise HandoffMalformed(
             f"The pending {agent_type} handoff is malformed or has an invalid schema."
         )
 
@@ -490,11 +506,11 @@ def claim_pending(
             claimed.unlink()
         except OSError as error:
             transport_failure("removing an expired pending handoff", error)
-        raise HandoffMissing(f"The pending {agent_type} handoff expired before the child started.")
+        raise HandoffExpired(f"The pending {agent_type} handoff expired before the child started.")
 
     if envelope["agent_type"] != agent_type:
         quarantine_claim(claimed, agent_type, safe_agent_id)
-        raise HandoffMissing(f"The pending handoff does not match the {agent_type} child.")
+        raise HandoffMalformed(f"The pending handoff does not match the {agent_type} child.")
     return envelope, claimed
 
 
@@ -591,6 +607,10 @@ def run_stage_cli(root: pathlib.Path, args: argparse.Namespace) -> None:
             visual_context=visual_context,
             evidence_packet=evidence_packet,
         )
+    except HandoffLocked as error:
+        fail(str(error), 13)
+    except HandoffCorrupt as error:
+        fail(str(error), 9)
     except HandoffBusy as error:
         fail(str(error), 3)
     except EnvelopeError as error:
@@ -606,6 +626,10 @@ def run_target_hook_locked(root: pathlib.Path, hook_input: Dict[str, Any]) -> No
         envelope, claimed = claim_pending(root, agent_type, agent_id)
     except HandoffBusy as error:
         fail(str(error), 11)
+    except HandoffMalformed as error:
+        fail(str(error), 5)
+    except HandoffExpired as error:
+        fail(str(error), 6)
     except HandoffMissing as error:
         fail(str(error), 10)
     context = build_child_context(envelope)
@@ -639,8 +663,11 @@ def run_hook(root: pathlib.Path) -> None:
         or hook_input.get("agent_type") not in VALID_AGENTS
     ):
         return
-    with state_lock(root, hook_input["agent_type"]):
-        run_target_hook_locked(root, hook_input)
+    try:
+        with state_lock(root, hook_input["agent_type"]):
+            run_target_hook_locked(root, hook_input)
+    except HandoffLocked as error:
+        fail(str(error), 13)
 
 
 def build_parser() -> argparse.ArgumentParser:
