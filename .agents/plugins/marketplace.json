@@ -1,0 +1,21 @@
+{
+  "name": "deepseek-router",
+  "interface": {
+    "displayName": "DeepSeek Router"
+  },
+  "plugins": [
+    {
+      "name": "codex-deepseek-router",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/TheBlindM/codex-deepseek-router.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

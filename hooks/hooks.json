@@ -7,7 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/ABSOLUTE/PATH/TO/codex-deepseek-router/plaintext_handoff.py\" --mode hook --state-directory \"/ABSOLUTE/PATH/TO/codex-home/deepseek-router/handoff\"",
+            "command": "python3 \"$PLUGIN_ROOT/hooks/plaintext_handoff.py\" --mode hook",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$env:PLUGIN_ROOT\\hooks\\plaintext-handoff.ps1\" -Mode hook",
             "timeout": 10,
             "statusMessage": "正在传递 DeepSeek 子 Agent 任务 / Delivering assignment",
             "additionalContextLimit": 0

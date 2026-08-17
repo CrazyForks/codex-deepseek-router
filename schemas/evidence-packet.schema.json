@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/codex-deepseek-router/codex-deepseek-router/schemas/evidence-packet.schema.json",
+  "$id": "https://github.com/TheBlindM/codex-deepseek-router/schemas/evidence-packet.schema.json",
   "title": "EvidencePacket",
   "description": "Evidence collected by deepseek_flash, passed to deepseek_pro on ESCALATE_TO_PRO.",
   "type": "object",

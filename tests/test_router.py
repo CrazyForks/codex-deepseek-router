@@ -9,7 +9,7 @@ import pytest
 import codex_deepseek_router as manager
 import plaintext_handoff as handoff
 
-PACKAGE = Path(__file__).resolve().parents[1] / "codex-deepseek-router"
+PACKAGE = Path(__file__).resolve().parents[1]
 SCHEMAS = PACKAGE / "schemas"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 

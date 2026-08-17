@@ -8,7 +8,7 @@ results; that data is transmitted to the DeepSeek provider
 passwords, authentication headers, SSH keys or private keys into a handoff,
 and the runtime skill keeps sensitive or `VISION_CRITICAL` work in the
 parent. See
-`codex-deepseek-router/references/security.md` for the full model.
+`references/security.md` for the full model.
 
 ## Credential handling
 
@@ -18,7 +18,7 @@ parent. See
 - Windows: Credential Manager (same target); agent TOMLs use the
   `DEEPSEEK_API_KEY` environment variable because command-backed credential
   lookup fails under the Desktop sandbox identity (see
-  `codex-deepseek-router/references/compatibility.md`).
+  `references/compatibility.md`).
 - Linux: `DEEPSEEK_API_KEY` environment variable.
 
 Keys are accepted only via `--api-key-stdin`. They never appear in argv,
@@ -36,10 +36,11 @@ content as already outbound to DeepSeek.
 
 ## Hook trust
 
-Codex requires user review of non-managed command hooks (`/hooks`). This
-project never writes or forges the trust record; `setup` reports
-`hook_review_required` until the user reviews it, and the live `test`
-refuses to run before that.
+The Plugin declares the command Hook and Codex owns discovery, review and
+trust. This project never writes global Hook configuration or forges the trust
+record. `setup` reports `hook_review_required` until Codex reports trust; the
+interactive CLI `/hooks` command is a fallback when the native Plugin UI is
+not shown.
 
 ## Reporting
 

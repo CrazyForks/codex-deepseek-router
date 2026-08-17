@@ -47,10 +47,14 @@
 
 ## Pieces
 
+- **Plugin** (`.codex-plugin/plugin.json`): discovery boundary for the
+  management/routing Skills and `hooks/hooks.json`. Codex owns Hook review and
+  trust; no installer writes a global Hook configuration.
 - **Manager** (`scripts/codex_deepseek_router.py`): single-entry CLI
-  (`status setup test repair disable uninstall doctor`). Owns atomic writes,
-  backups, manifest, conflict/adoption detection, credentials, catalog,
-  agent/hook/skill installation and the dual-oracle smoke tests.
+  (`status setup test repair migrate disable uninstall doctor`). Owns atomic
+  writes, backups, manifest, credentials, catalog, Agent installation and
+  dual-oracle smoke tests. `migrate` is the only command that may remove a
+  precisely recognized legacy global Hook.
 - **Agents**: two standalone TOMLs in `~/.codex/agents/`. Each declares its
   own `model`, `model_provider`, `[model_providers.deepseek]` block and
   sandbox. Codex treats each file as the config layer of the spawned child
@@ -63,10 +67,12 @@
   carried as provider-internal ciphertext that DeepSeek cannot consume
   (openai/codex#34833, #36376), so the assignment travels in plaintext
   instead. At-most-once; TTL 300 s; malformed state is quarantined.
-- **Runtime skill** (`skills/use-deepseek-router`): teaches the parent when
+- **Routing Skill** (`skills/use-deepseek-router`): teaches the parent when
   and how to delegate: modality → sensitivity → model → policy → dispatch →
   verify → escalate. Flash is read-only (proposals as text, parent lands
   edits); Pro is workspace-write and owns implementation.
+- **Runtime** (`runtime/`): independent router, context sanitizer, model client,
+  structured protocol and usage metadata for Hook-disabled explicit calls.
 - **State** (`~/.codex/deepseek-router/`): manifest.json, timestamped
   backups, per-role handoff files. All writes are temp-file + fsync +
   atomic replace inside a process lock; failures roll back the transaction.
@@ -75,7 +81,7 @@
 
 1. `native` — Codex's own V2 collaboration message. Preferred once a real
    smoke proves the child receives and understands the assignment.
-2. `plaintext_hook` — the installed SubagentStart hook. **V1 default**,
+2. `plaintext_hook` — the Plugin-owned SubagentStart hook. **V1 default**,
    because native cross-provider delivery is currently unreliable.
 3. `legacy_v1` — last-resort whole-session `multi_agent_v2 = false`. Not
    applied automatically; documented only as an explicit workaround.

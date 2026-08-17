@@ -26,14 +26,18 @@ Codex 原生配置：两个 Agent、一个模型目录、一个明文交接 Hook
 要求：Node.js/npm、Python 3.9+、至少启动过一次的 Codex 桌面应用，以及
 DeepSeek API Key。
 
-### 1. 安装管理 Skill
+### 1. 安装 Plugin
 
 ```bash
-npx skills add TheBlindM/codex-deepseek-router -g -y
+codex plugin marketplace add TheBlindM/codex-deepseek-router
+codex plugin add codex-deepseek-router@deepseek-router
 ```
 
-这条命令使用开放的 [`skills` CLI](https://github.com/vercel-labs/skills) 从
-GitHub 安装 Skill；本项目不需要单独发布 npm 包。
+这里的 `deepseek-router` 是仓库提供的 Marketplace 名称，定义在
+`.agents/plugins/marketplace.json`，不是需要用户自行替换的占位符。
+
+Plugin 会同时提供管理 Skill、路由 Skill 与原生 Hook，不需要手动写入全局
+`~/.codex/hooks.json`。
 
 ### 2. 在 Codex 中完成配置
 
@@ -48,9 +52,9 @@ Skill 会先检查状态。缺少凭据时，Codex 会索要 API Key，并只通
 
 ### 3. 审查并验收
 
-1. 在 Codex 中运行 `/hooks`，审查并信任新 Hook。
+1. 重启 Codex 或打开新任务，在原生 Plugin Hook UI 中 Review/Trust。
 2. 让 Codex 运行真实路由测试；Flash 与 Pro 必须分别通过。
-3. 结果为 `ready` 后，重启应用并新建任务。
+3. 若当前版本没有自动显示 Review Prompt，再在交互式 CLI 使用 `/hooks`。
 
 以后可以直接说：
 
@@ -93,8 +97,9 @@ Flash 可以返回带 Evidence Packet 的 `ESCALATE_TO_PRO`；Pro 从已有证�
 
 - 同时安装 `deepseek-flash.toml` 与 `deepseek-pro.toml`；
 - 在 `~/.codex/models.json` 同时注册两个模型；
-- 将交接 Hook 合并进 `~/.codex/hooks.json`，保留无关 Hook；
-- 安装 `use-deepseek-router` 运行时 Skill；
+- 由 Plugin 提供 `skills/` 与 `hooks/hooks.json`；Hook 通过 `PLUGIN_ROOT`
+  定位文件，不依赖 cwd 或用户绝对路径；
+- setup 只配置凭据、Agent、模型目录与显式路由所需的本地运行时；
 - 使用系统凭据库保存 Key，并在任何步骤失败时完整回滚；
 - 永远不修改父任务的 `config.toml`，也不伪造 Hook 信任状态。
 
@@ -114,7 +119,8 @@ DeepSeek 子 Agent 只接收文本。截图、图片和视频必须先由 Codex 
 | `setup` | 幂等、事务化地安装全部组件 |
 | `test` | 分别执行 Flash 与 Pro 的真实原生派发验收 |
 | `repair` | 在父模型升级、Codex 更新或配置漂移后恢复 |
-| `disable` | 只移除路由 Hook，保留凭据、目录与备份 |
+| `migrate` | 精确移除旧 Skill-first 全局 Hook，不触碰其它 Hook |
+| `disable` | 记录停用意图；Plugin Hook 由 Codex/Plugin 管理 |
 | `uninstall` | 删除本项目拥有的内容；默认保留 API Key |
 | `doctor` | 诊断环境、Hook 信任与 handoff 状态 |
 
@@ -127,19 +133,19 @@ ready/configured，`2` 表示需要人工处理，`3` 表示超时，`1` 表示�
 ```bash
 git clone https://github.com/TheBlindM/codex-deepseek-router.git
 cd codex-deepseek-router
-python3 codex-deepseek-router/scripts/codex_deepseek_router.py status --json
+python3 scripts/codex_deepseek_router.py status --json
 ```
 
 只通过 stdin 配置 Key：
 
 ```bash
-printf '%s\n' '<你的key>' | python3 codex-deepseek-router/scripts/codex_deepseek_router.py setup --api-key-stdin --json
+printf '%s\n' '<你的key>' | python3 scripts/codex_deepseek_router.py setup --api-key-stdin --json
 ```
 
-审查 Hook 后运行真实验收：
+完成 Codex 原生 Plugin Hook 审查（若未出现提示，再用 CLI `/hooks`）后运行真实验收：
 
 ```bash
-python3 codex-deepseek-router/scripts/codex_deepseek_router.py test --json
+python3 scripts/codex_deepseek_router.py test --json
 ```
 
 `test` 会分别证明两个角色使用正确的 `model_provider`、model 与 agent role，
@@ -149,11 +155,11 @@ python3 codex-deepseek-router/scripts/codex_deepseek_router.py test --json
 
 ## 文档
 
-- [架构](codex-deepseek-router/references/architecture.md) ·
-  [路由策略](codex-deepseek-router/references/routing-policy.md) ·
-  [多模态边界](codex-deepseek-router/references/multimodal.md)
-- [兼容性](codex-deepseek-router/references/compatibility.md) ·
-  [安全设计](codex-deepseek-router/references/security.md) ·
+- [架构](references/architecture.md) ·
+  [路由策略](references/routing-policy.md) ·
+  [多模态边界](references/multimodal.md)
+- [兼容性](references/compatibility.md) ·
+  [安全设计](references/security.md) ·
   [故障排查](docs/troubleshooting.md)
 - [设计决策](docs/architecture.md) · [评测](docs/eval.md) ·
   [上游来源映射](docs/upstream-reference-map.md)

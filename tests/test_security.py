@@ -103,7 +103,7 @@ def test_handoff_cli_has_no_assignment_argv_option():
 
 
 def test_handoff_cli_stage_reads_assignment_from_stdin_only(handoff_dir):
-    script = ROOT / "codex-deepseek-router" / "hooks" / "plaintext_handoff.py"
+    script = ROOT / "hooks" / "plaintext_handoff.py"
     secret = "sk-test-secret"
     proc = subprocess.run(
         [

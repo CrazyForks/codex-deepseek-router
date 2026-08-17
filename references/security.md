@@ -40,10 +40,10 @@ delivered.
 
 ## Hook trust
 
-Codex requires user review of non-managed command hooks (`/hooks`). The
-installer never writes or forges the trust record. `setup` reports
-`hook_review_required` until the user reviews the hook; the live `test`
-refuses to run before that.
+The Plugin declares the command Hook and Codex owns discovery, review and
+trust. The installer never writes global Hook configuration or forges a trust
+record. `/hooks` is fallback UI only; `setup` and `doctor` report the public
+Hook metadata and `test` refuses native delivery until Codex reports trust.
 
 ## Ownership and rollback
 

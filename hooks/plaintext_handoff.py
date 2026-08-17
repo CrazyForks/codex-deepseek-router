@@ -92,6 +92,18 @@ def fail(message: str, code: int) -> None:
     raise SystemExit(code)
 
 
+def fail_open(message: str) -> None:
+    """A transport failure must not abort the Codex parent task."""
+    print(f"Plaintext handoff skipped: {message}", file=sys.stderr)
+    json.dump(
+        {"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": ""}},
+        sys.stdout,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    sys.stdout.flush()
+
+
 def transport_failure(action: str, error: OSError) -> None:
     fail(f"Plaintext handoff transport failure while {action}: {error}", 12)
 
@@ -630,13 +642,13 @@ def run_target_hook_locked(root: pathlib.Path, hook_input: Dict[str, Any]) -> No
     try:
         envelope, claimed = claim_pending(root, agent_type, agent_id)
     except HandoffBusy as error:
-        fail(str(error), 11)
+        raise HandoffBusy(str(error)) from error
     except HandoffMalformed as error:
-        fail(str(error), 5)
+        raise HandoffMalformed(str(error)) from error
     except HandoffExpired as error:
-        fail(str(error), 6)
+        raise HandoffExpired(str(error)) from error
     except HandoffMissing as error:
-        fail(str(error), 10)
+        raise HandoffMissing(str(error)) from error
     context = build_child_context(envelope)
     try:
         json.dump(
@@ -652,7 +664,7 @@ def run_target_hook_locked(root: pathlib.Path, hook_input: Dict[str, Any]) -> No
         )
         sys.stdout.flush()
     except OSError as error:
-        transport_failure("delivering the claimed handoff", error)
+        raise error
     consume_claim(claimed)
 
 
@@ -660,9 +672,11 @@ def run_hook(root: pathlib.Path) -> None:
     try:
         hook_input = json.load(sys.stdin)
     except json.JSONDecodeError as error:
-        fail(f"SubagentStart hook input was invalid JSON: {error}", 4)
+        fail_open(f"SubagentStart hook input was invalid JSON: {error}")
+        return
     if not isinstance(hook_input, dict):
-        fail("SubagentStart hook input must be a JSON object.", 4)
+        fail_open("SubagentStart hook input must be a JSON object.")
+        return
     if (
         hook_input.get("hook_event_name") != "SubagentStart"
         or hook_input.get("agent_type") not in VALID_AGENTS
@@ -671,8 +685,8 @@ def run_hook(root: pathlib.Path) -> None:
     try:
         with state_lock(root, hook_input["agent_type"]):
             run_target_hook_locked(root, hook_input)
-    except HandoffLocked as error:
-        fail(str(error), 13)
+    except (HandoffBusy, HandoffMalformed, HandoffExpired, HandoffMissing, HandoffLocked, OSError, ValueError) as error:
+        fail_open(str(error))
 
 
 def build_parser() -> argparse.ArgumentParser:

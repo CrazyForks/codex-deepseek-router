@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/codex-deepseek-router/codex-deepseek-router/schemas/assignment-envelope.schema.json",
+  "$id": "https://github.com/TheBlindM/codex-deepseek-router/schemas/assignment-envelope.schema.json",
   "title": "AssignmentEnvelope",
   "description": "A one-shot plaintext task handoff staged by the Codex parent for a DeepSeek child agent.",
   "type": "object",

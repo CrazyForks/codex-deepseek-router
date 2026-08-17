@@ -22,6 +22,7 @@ import getpass
 import hashlib
 import json
 import os
+import queue
 import re
 import shlex
 import shutil
@@ -30,6 +31,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import ExitStack, contextmanager
@@ -95,6 +97,7 @@ HOOKS_INSTALL_DIR_NAME = PROJECT_NAME
 MAX_STATE_DATABASES = 32
 METADATA_WAIT_SECONDS = 5.0
 LOCK_WAIT_SECONDS = 5.0
+APP_SERVER_TIMEOUT_SECONDS = 10.0
 MAX_ASSIGNMENT_CHARS = 1_000_000
 
 DESKTOP_CODEX_CANDIDATES = (
@@ -205,8 +208,16 @@ class Paths:
         return self.codex_home / "hooks" / HOOKS_INSTALL_DIR_NAME
 
     @property
-    def runtime_skill_dir(self) -> Path:
-        return self.codex_home / "skills" / "use-deepseek-router"
+    def plugin_root(self) -> Path:
+        return package_root()
+
+    @property
+    def plugin_manifest(self) -> Path:
+        return self.plugin_root / ".codex-plugin" / "plugin.json"
+
+    @property
+    def plugin_hooks_config(self) -> Path:
+        return self.plugin_root / "hooks" / "hooks.json"
 
     def agent_path(self, agent_type: str) -> Path:
         if agent_type == FLASH_ROLE:
@@ -1111,7 +1122,7 @@ def write_manifest(paths: Paths, payload: Dict[str, Any]) -> None:
 
 def default_manifest(original_parent_model: str, original_parent_provider: Optional[str]) -> Dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "hash_version": HASH_VERSION_EXACT_BYTES,
         "project": PROJECT_NAME,
         "installed_at": datetime.now().isoformat(timespec="seconds"),
@@ -1120,22 +1131,21 @@ def default_manifest(original_parent_model: str, original_parent_provider: Optio
             "pro_agent": True,
             "provider": True,  # provider lives inside the managed agent TOMLs
             "catalog": True,
-            "hook": True,
-            "runtime_skill": True,
+            "plugin": True,
         },
         "adopted_existing": {
             "provider": False,
             "catalog": False,
-            "hook": False,
+            "legacy_hook": False,
         },
         "original": {
             "parent_model": original_parent_model,
             "parent_provider": original_parent_provider,
         },
         "hashes": {},
-        "preexisted": {"catalog": False, "hook_config": False},
+        "preexisted": {"catalog": False},
         "transport_mode": TransportMode.PLAINTEXT_HOOK.value,
-        "disabled": False,
+        "legacy_migration": None,
         "last_test": None,
     }
 
@@ -1159,23 +1169,10 @@ def managed_assets(paths: Paths) -> Dict[str, ManagedAsset]:
         "flash_agent": ManagedAsset(paths.flash_agent),
         "pro_agent": ManagedAsset(paths.pro_agent),
         "catalog": ManagedAsset(paths.catalog),
-        "runtime_skill": ManagedAsset(
-            paths.runtime_skill_dir / "SKILL.md",
-            hook_runtime=True,
-        ),
-        "hook_config": ManagedAsset(
-            paths.hooks_config,
-            verify_integrity=False,
-            shared=True,
-        ),
-        "hook_script_py": ManagedAsset(
-            paths.hooks_install_dir / "plaintext_handoff.py",
-            hook_runtime=True,
-        ),
-        "hook_script_ps1": ManagedAsset(
-            paths.hooks_install_dir / "plaintext-handoff.ps1",
-            hook_runtime=True,
-        ),
+        # These are execution helpers for explicit Skill fallback. The Plugin
+        # Hook itself always executes the Plugin-relative copies.
+        "handoff_script_py": ManagedAsset(paths.hooks_install_dir / "plaintext_handoff.py"),
+        "handoff_script_ps1": ManagedAsset(paths.hooks_install_dir / "plaintext-handoff.ps1"),
     }
 
 
@@ -1335,24 +1332,6 @@ def install_catalog(paths: Paths, manifest: Dict[str, Any]) -> bool:
     return True
 
 
-def install_runtime_skill(paths: Paths, manifest: Dict[str, Any]) -> bool:
-    source = package_root() / "skills" / "use-deepseek-router" / "SKILL.md"
-    if not source.is_file():
-        raise ManagerError("skill_source_missing", f"Runtime skill source not found: {source}")
-    data = source.read_bytes()
-    target = paths.runtime_skill_dir / "SKILL.md"
-    if target.is_file() and not _assert_writable_target(target, data, manifest, "runtime_skill"):
-        raise ManagerError(
-            "conflict",
-            f"Existing runtime skill differs from the router-managed target: {target}",
-            {"path": str(target)},
-        )
-    if target.is_file() and target.read_text(encoding="utf-8") == data.decode("utf-8"):
-        return False
-    atomic_write(target, data, mode=0o644)
-    return True
-
-
 def hook_entry_json(command: str, status_message: str) -> Dict[str, Any]:
     return {
         "type": "command",
@@ -1364,6 +1343,7 @@ def hook_entry_json(command: str, status_message: str) -> Dict[str, Any]:
 
 
 def our_hook_config(paths: Paths) -> Dict[str, Any]:
+    """Legacy global Hook shape used only for detection and precise migration."""
     python = sys.executable or "python3"
     handoff_script = paths.hooks_install_dir / "plaintext_handoff.py"
     command = (
@@ -1390,6 +1370,35 @@ def our_hook_config(paths: Paths) -> Dict[str, Any]:
     }
 
 
+def plugin_hook_config(paths: Paths) -> Dict[str, Any]:
+    """Load the Plugin-owned Hook without mutating Codex configuration."""
+    try:
+        value = json.loads(paths.plugin_hooks_config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def plugin_hook_available(paths: Paths) -> bool:
+    config = plugin_hook_config(paths)
+    entries = (config.get("hooks") or {}).get("SubagentStart") if config else None
+    if not isinstance(entries, list) or len(entries) != 1:
+        return False
+    entry = entries[0]
+    handlers = entry.get("hooks") if isinstance(entry, dict) else None
+    if entry.get("matcher") != "^(deepseek_flash|deepseek_pro)$" or not isinstance(handlers, list):
+        return False
+    if len(handlers) != 1 or not isinstance(handlers[0], dict):
+        return False
+    command = handlers[0].get("command")
+    return (
+        handlers[0].get("type") == "command"
+        and isinstance(command, str)
+        and "PLUGIN_ROOT" in command
+        and handlers[0].get("timeout") == 10
+    )
+
+
 def _matcher_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     def normalize(entry: Dict[str, Any]) -> Dict[str, Any]:
         copied = dict(entry)
@@ -1411,6 +1420,16 @@ def _entry_is_ours(entry: Dict[str, Any], paths: Paths) -> bool:
         return re.split(r"[\\/]", value.strip('"'))[-1].lower()
 
     recognized = False
+    def owned_script(path_value: str, expected_name: str) -> bool:
+        candidate = Path(path_value).expanduser()
+        if not candidate.is_file() or candidate.name.lower() != expected_name.lower():
+            return False
+        source = package_root() / "hooks" / expected_name
+        try:
+            return source.is_file() and sha256_file(candidate) == sha256_file(source)
+        except OSError:
+            return False
+
     if command:
         if re.search(r"[;&|`$><\r\n]", command):
             return False
@@ -1424,6 +1443,7 @@ def _entry_is_ours(entry: Dict[str, Any], paths: Paths) -> bool:
             and tokens[2:5] == ["--mode", "hook", "--state-directory"]
             and tokens[0]
             and tokens[5]
+            and owned_script(tokens[1], "plaintext_handoff.py")
         ):
             return False
         recognized = True
@@ -1448,6 +1468,7 @@ def _entry_is_ours(entry: Dict[str, Any], paths: Paths) -> bool:
             and basename(tokens[6]) == "plaintext-handoff.ps1"
             and lowered[7:10] == ["-mode", "hook", "-statedirectory"]
             and tokens[10]
+            and owned_script(tokens[6], "plaintext-handoff.ps1")
         ):
             return False
         recognized = True
@@ -1550,23 +1571,182 @@ def install_hook_config(paths: Paths, manifest: Dict[str, Any]) -> Tuple[bool, b
     return changed, False
 
 
-def hook_trusted(paths: Paths) -> bool:
-    """Heuristic: Codex records the trusted hook command (or its config) in config.toml.
+def _wait_for_app_server_response(
+    messages: "queue.Queue[Optional[Dict[str, Any]]]",
+    request_id: int,
+    deadline: float,
+) -> Optional[Dict[str, Any]]:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            message = messages.get(timeout=remaining)
+        except queue.Empty:
+            return None
+        if message is None:
+            return None
+        if message.get("id") != request_id:
+            continue
+        if message.get("error") is not None:
+            return None
+        result_value = message.get("result")
+        return result_value if isinstance(result_value, dict) else None
 
-    We never write or forge that state ourselves; it appears only after the user
-    reviews the hook with /hooks. The check is deliberately lenient: any mention
-    of our installed handoff script path inside config.toml counts as trusted.
+
+def _query_codex_hooks(paths: Paths, codex_bin: str) -> Optional[Dict[str, Any]]:
+    """Ask Codex for its canonical discovered-hook and trust metadata.
+
+    Hook trust is keyed by source identity plus Codex's current normalized hash.
+    Reading config.toml cannot safely reconstruct whether that hash still matches,
+    so status checks use the same app-server hooks/list API as the /hooks TUI.
     """
-    if not paths.config.is_file():
+    workspace = Path.cwd().resolve()
+    env = dict(os.environ)
+    env["CODEX_HOME"] = str(paths.codex_home)
+    try:
+        process = subprocess.Popen(
+            [codex_bin, "app-server", "--stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            env=env,
+            bufsize=1,
+        )
+    except (OSError, ValueError):
+        return None
+
+    messages: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
+
+    def read_messages() -> None:
+        assert process.stdout is not None
+        try:
+            for line in process.stdout:
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    messages.put(value)
+        finally:
+            messages.put(None)
+
+    reader = threading.Thread(target=read_messages, daemon=True)
+    reader.start()
+
+    def send(message: Dict[str, Any]) -> bool:
+        if process.stdin is None:
+            return False
+        try:
+            process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+            process.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError):
+            return False
+        return True
+
+    deadline = time.monotonic() + APP_SERVER_TIMEOUT_SECONDS
+    try:
+        initialized = send(
+            {
+                "method": "initialize",
+                "id": 0,
+                "params": {
+                    "clientInfo": {
+                        "name": PROJECT_NAME.replace("-", "_"),
+                        "title": "Codex DeepSeek Router",
+                        "version": "1",
+                    }
+                },
+            }
+        ) and _wait_for_app_server_response(messages, 0, deadline)
+        if not initialized:
+            return None
+        if not send({"method": "initialized", "params": {}}):
+            return None
+        if not send(
+            {
+                "method": "hooks/list",
+                "id": 1,
+                "params": {"cwds": [str(workspace)]},
+            }
+        ):
+            return None
+        response = _wait_for_app_server_response(messages, 1, deadline)
+        if response is None:
+            return None
+        for entry in response.get("data") or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                same_cwd = Path(entry.get("cwd", "")).resolve() == workspace
+            except (OSError, RuntimeError, TypeError):
+                same_cwd = False
+            if same_cwd:
+                return entry
+        return None
+    finally:
+        if process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+
+
+def hook_trusted(paths: Paths, codex_bin: Optional[str] = None) -> bool:
+    """True only when Codex reports the Plugin Hook source as trusted."""
+    if not codex_bin:
         return False
-    script = paths.hooks_install_dir / "plaintext_handoff.py"
-    ps1 = paths.hooks_install_dir / "plaintext-handoff.ps1"
-    text = paths.config.read_text(encoding="utf-8")
-    return str(script) in text or str(ps1) in text
+    runtime_entry = _query_codex_hooks(paths, codex_bin)
+    if not runtime_entry or runtime_entry.get("errors"):
+        return False
+
+    config = plugin_hook_config(paths)
+    entries = (config.get("hooks") or {}).get("SubagentStart") if config else None
+    if not isinstance(entries, list) or len(entries) != 1:
+        return False
+    group = entries[0]
+    handler = group["hooks"][0]
+    expected_command = handler.get("commandWindows") if platform_name() == "windows" else handler.get("command")
+    expanded_command = str(expected_command or "").replace("$PLUGIN_ROOT", str(paths.plugin_root))
+    try:
+        expected_source = paths.plugin_hooks_config.resolve()
+    except (OSError, RuntimeError):
+        expected_source = paths.plugin_hooks_config.absolute()
+
+    matches: List[Dict[str, Any]] = []
+    for hook in runtime_entry.get("hooks") or []:
+        if not isinstance(hook, dict):
+            continue
+        try:
+            source_matches = Path(hook.get("sourcePath", "")).resolve() == expected_source
+        except (OSError, RuntimeError, TypeError):
+            source_matches = False
+        if (
+            source_matches
+            and hook.get("eventName") == "subagentStart"
+            and hook.get("handlerType") == "command"
+            and hook.get("matcher") == group["matcher"]
+            and hook.get("command") in {expected_command, expanded_command}
+        ):
+            matches.append(hook)
+
+    return bool(
+        len(matches) == 1
+        and matches[0].get("enabled") is True
+        and matches[0].get("trustStatus") == "trusted"
+    )
 
 
 def hook_entry_present(paths: Paths) -> bool:
-    """True when hooks.json still contains a router-equivalent SubagentStart entry."""
+    """True when the legacy global hooks.json contains our router entry."""
     if not paths.hooks_config.is_file():
         return False
     try:
@@ -1585,6 +1765,46 @@ def hook_entry_present(paths: Paths) -> bool:
     return len(router_entries) == 1 and _matcher_equal(router_entries[0], ours)
 
 
+def legacy_hook_status(paths: Paths) -> Dict[str, Any]:
+    """Describe only the old global entry this project can identify exactly."""
+    if not paths.hooks_config.is_file():
+        return {"present": False, "recognized": False, "conflict": False}
+    try:
+        config = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"present": True, "recognized": False, "conflict": True}
+    entries = (config.get("hooks") or {}).get("SubagentStart") if isinstance(config, dict) else None
+    matching = [entry for entry in entries or [] if isinstance(entry, dict) and entry.get("matcher") == "^(deepseek_flash|deepseek_pro)$"]
+    recognized = [entry for entry in matching if _entry_is_ours(entry, paths)]
+    return {
+        "present": bool(matching),
+        "recognized": len(recognized) == len(matching) and bool(recognized),
+        "conflict": bool(matching) and len(recognized) != len(matching),
+        "count": len(matching),
+    }
+
+
+def plugin_status(paths: Paths) -> Dict[str, Any]:
+    manifest_valid = False
+    if paths.plugin_manifest.is_file():
+        try:
+            payload = json.loads(paths.plugin_manifest.read_text(encoding="utf-8"))
+            manifest_valid = (
+                isinstance(payload, dict)
+                and payload.get("name") == PROJECT_NAME
+                and isinstance(payload.get("version"), str)
+            )
+        except (OSError, json.JSONDecodeError):
+            manifest_valid = False
+    return {
+        "root": str(paths.plugin_root),
+        "manifest": str(paths.plugin_manifest),
+        "manifest_valid": manifest_valid,
+        "hook_config": str(paths.plugin_hooks_config),
+        "hook_available": plugin_hook_available(paths),
+    }
+
+
 def runtime_assets_valid(paths: Paths, manifest: Dict[str, Any]) -> bool:
     """All executable/runtime assets must match the installed manifest exactly."""
     return all(
@@ -1595,23 +1815,19 @@ def runtime_assets_valid(paths: Paths, manifest: Dict[str, Any]) -> bool:
 
 
 def hook_files_installed(paths: Paths, manifest: Dict[str, Any]) -> bool:
-    return all(
-        _file_is_ours(asset.path, manifest, key)
-        for key, asset in managed_assets(paths).items()
-        if asset.hook_runtime
-    )
+    return plugin_hook_available(paths)
 
 
 def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[str, bool], bool]:
-    """Install/refresh every managed asset. Returns (changed, hook_adopted)."""
+    """Install/refresh non-Plugin assets. Plugin Skills and Hooks stay in-place."""
     changed: Dict[str, bool] = {}
     changed["catalog"] = install_catalog(paths, manifest)
     changed["flash_agent"] = install_agent(paths, AGENT_SPECS[FLASH_ROLE], manifest)
     changed["pro_agent"] = install_agent(paths, AGENT_SPECS[PRO_ROLE], manifest)
-    changed["runtime_skill"] = install_runtime_skill(paths, manifest)
-    hook_changed, hook_adopted = install_hook_config(paths, manifest)
-    changed["hook"] = hook_changed
-    return changed, hook_adopted
+    before = {key: path.is_file() for key, path in managed_asset_paths(paths).items() if key.startswith("handoff_script_")}
+    install_hook_files(paths, manifest)
+    changed["handoff_runtime"] = any(not before.get(key, False) for key in before)
+    return changed, False
 
 
 def compute_asset_hashes(paths: Paths) -> Dict[str, str]:
@@ -1676,11 +1892,11 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
         "pro_agent": agent_status(paths, manifest, AGENT_SPECS[PRO_ROLE]),
         "catalog": catalog_status(paths),
     }
-    entry_present = hook_entry_present(paths)
-    scripts_present = hook_files_installed(paths, manifest)
-    hooks_installed = entry_present and scripts_present
+    legacy = legacy_hook_status(paths)
+    plugin = plugin_status(paths)
+    hooks_installed = plugin["manifest_valid"] and plugin["hook_available"]
     assets_valid = runtime_assets_valid(paths, manifest)
-    trusted = hook_trusted(paths)
+    trusted = hook_trusted(paths, codex_bin)
     errors: List[str] = []
 
     codex_path: Optional[str] = None
@@ -1702,7 +1918,7 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
     )
     # Live-test evidence stays valid only while the managed files it tested
     # are still byte-identical to the installed versions.
-    evidence_fresh = test_evidence and assets_valid and hook_entry_present(paths)
+    evidence_fresh = test_evidence and assets_valid
     credential_is_present = credential_present()
 
     if installed:
@@ -1711,11 +1927,10 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
             and checks["pro_agent"]["valid"]
             and checks["catalog"]["registered"]
             and assets_valid
-            and hooks_installed
             and credential_is_present
             and parent_unchanged
         )
-        if manifest.get("disabled"):
+        if manifest.get("disabled") or manifest.get("automatic_disabled"):
             status = "disabled"
         elif static_ok and evidence_fresh:
             status = "ready"
@@ -1752,11 +1967,14 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
         credential={"backend": credential_backend(), "present": credential_is_present},
         hook={
             "installed": hooks_installed,
-            "entry_present": entry_present,
-            "files_installed": scripts_present,
+            "entry_present": hooks_installed,
+            "files_installed": hooks_installed,
             "trusted": trusted,
             "review_required": installed and hooks_installed and not trusted,
+            "automatic": hooks_installed and trusted,
+            "legacy": legacy,
         },
+        plugin=plugin,
         hook_trusted=trusted,
         transport_mode=choose_transport(False, hooks_installed).value,
         catalog=checks["catalog"],
@@ -1811,9 +2029,8 @@ def setup(
     previous = manifest or {}
     adopted: Dict[str, bool] = {
         "catalog": bool(paths.catalog.is_file()),
-        "hook": False,
+        "legacy_hook": legacy_hook_status(paths).get("recognized", False),
     }
-    hook_config_preexisted = bool(paths.hooks_config.is_file())
     backup = make_backup(paths)
     changed: Dict[str, bool] = {}
     try:
@@ -1826,21 +2043,20 @@ def setup(
                 "parent_model_unconfigured",
                 "config.toml has no explicit top-level non-DeepSeek parent model.",
             )
-        # 4-7. Managed assets: catalog, both agents, runtime skill, handoff hook.
-        changed, hook_adopted = apply_managed_assets(paths, previous)
-        adopted["hook"] = hook_adopted
+        # 4-6. Managed assets: catalog and both agents. Plugin Skills/Hooks are
+        # discovered from the installed Plugin and are never copied globally.
+        changed, _ = apply_managed_assets(paths, previous)
 
         new_manifest = default_manifest(snapshot["parent_model"], snapshot["parent_provider"])
         new_manifest["adopted_existing"].update(
             {
                 "provider": False,
                 "catalog": adopted["catalog"],
-                "hook": adopted["hook"],
+            "legacy_hook": adopted["legacy_hook"],
             }
         )
         new_manifest["preexisted"] = {
             "catalog": adopted["catalog"],
-            "hook_config": hook_config_preexisted,
         }
         new_manifest["hashes"] = compute_asset_hashes(paths)
         write_manifest(paths, new_manifest)
@@ -1856,7 +2072,7 @@ def setup(
         codex_version=detect_version,
         backup=str(backup),
         restart_required=True,
-        hook_review_required=True,
+        hook_review_required=plugin_hook_available(paths) and not hook_trusted(paths, codex_bin),
         new_task_required=True,
         data_boundary=(
             "Task text, related code context and tool results sent to the DeepSeek child "
@@ -1886,12 +2102,11 @@ def repair(paths: Paths, codex_bin: str) -> Dict[str, Any]:
     if not manifest:
         raise ManagerError("not_managed", "No router manifest found. Run setup first.")
     manifest["disabled"] = False
+    manifest["automatic_disabled"] = False
     backup = make_backup(paths)
     try:
-        changed, hook_adopted = apply_managed_assets(paths, manifest)
+        changed, _ = apply_managed_assets(paths, manifest)
         manifest["adopted_existing"] = manifest.get("adopted_existing", {})
-        if hook_adopted:
-            manifest["adopted_existing"]["hook"] = True
         manifest["hashes"] = compute_asset_hashes(paths)
         manifest["hash_version"] = HASH_VERSION_EXACT_BYTES
         # Repair may refresh executable assets or routing configuration. Prior
@@ -1913,7 +2128,7 @@ def repair(paths: Paths, codex_bin: str) -> Dict[str, Any]:
         changed=changed,
         backup=str(backup),
         restart_required=True,
-        hook_review_required=not hook_trusted(paths),
+        hook_review_required=plugin_hook_available(paths) and not hook_trusted(paths, codex_bin),
         new_task_required=True,
     )
 
@@ -1962,18 +2177,57 @@ def disable(paths: Paths) -> Dict[str, Any]:
     if not manifest:
         raise ManagerError("not_managed", "No router manifest found. Run setup first.")
     backup = make_backup(paths)
-    try:
-        changed = remove_our_hook_entry(paths, manifest)
-        manifest["disabled"] = True
-        write_manifest(paths, manifest)
-    except Exception:
-        restore_backup(paths, backup)
-        raise
+    manifest["automatic_disabled"] = True
+    write_manifest(paths, manifest)
     return result(
         "disabled",
-        changed=changed,
+        changed=False,
+        plugin_managed=True,
+        message="Automatic routing remains owned by the Plugin. Disable or remove the Plugin in Codex to stop its Hook.",
         credential_preserved=credential_present(),
         catalog_preserved=paths.catalog.is_file(),
+        backup=str(backup),
+    )
+
+
+def migrate_legacy(paths: Paths) -> Dict[str, Any]:
+    """Remove only a recognized Skill-first global Hook and its owned scripts."""
+    legacy = legacy_hook_status(paths)
+    if legacy.get("conflict"):
+        raise ManagerError(
+            "conflict",
+            "A DeepSeek matcher exists in hooks.json but is not an exact router-managed entry; refusing to remove it.",
+            legacy,
+        )
+    backup = make_backup(paths)
+    legacy_config_bytes = paths.hooks_config.read_bytes() if paths.hooks_config.is_file() else None
+    legacy_config_mode = stat.S_IMODE(paths.hooks_config.stat().st_mode) if paths.hooks_config.is_file() else 0o600
+    changed = False
+    try:
+        if legacy.get("recognized"):
+            changed = remove_our_hook_entry(paths, read_manifest(paths))
+            for target, source_name in (
+                (paths.hooks_install_dir / "plaintext_handoff.py", "plaintext_handoff.py"),
+                (paths.hooks_install_dir / "plaintext-handoff.ps1", "plaintext-handoff.ps1"),
+            ):
+                source = package_root() / "hooks" / source_name
+                if target.is_file() and source.is_file() and sha256_file(target) == sha256_file(source):
+                    target.unlink()
+            if paths.hooks_install_dir.is_dir() and not any(paths.hooks_install_dir.iterdir()):
+                paths.hooks_install_dir.rmdir()
+        manifest = read_manifest(paths)
+        if manifest:
+            manifest["legacy_migration"] = {"recognized": bool(legacy.get("recognized")), "changed": changed}
+            write_manifest(paths, manifest)
+    except Exception:
+        restore_backup(paths, backup)
+        if legacy_config_bytes is not None:
+            atomic_write(paths.hooks_config, legacy_config_bytes, mode=legacy_config_mode)
+        raise
+    return result(
+        "migrated",
+        changed=changed,
+        legacy=legacy,
         backup=str(backup),
     )
 
@@ -1996,17 +2250,14 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
             )
     backup = make_backup(paths)
     try:
-        remove_our_hook_entry(paths, manifest)
-        # If hooks.json was created by us and no hooks remain, remove the file.
-        if not manifest.get("preexisted", {}).get("hook_config") and paths.hooks_config.is_file():
-            try:
-                remaining = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                remaining = None
-            if isinstance(remaining, dict) and not remaining.get("hooks"):
-                paths.hooks_config.unlink(missing_ok=True)
+        # Plugin-owned Skills and Hooks are removed by Codex Plugin uninstall.
+        # The manager only removes its global Agents/catalog and state.
         for target in (assets["flash_agent"], assets["pro_agent"]):
             target.unlink(missing_ok=True)
+        for target in (assets["handoff_script_py"], assets["handoff_script_ps1"]):
+            target.unlink(missing_ok=True)
+        if paths.hooks_install_dir.is_dir() and not any(paths.hooks_install_dir.iterdir()):
+            paths.hooks_install_dir.rmdir()
         catalog_removed = False
         catalog_restored = False
         if paths.catalog.is_file():
@@ -2018,10 +2269,6 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
             else:
                 paths.catalog.unlink(missing_ok=True)
                 catalog_removed = True
-        runtime_skill = assets["runtime_skill"]
-        runtime_skill.unlink(missing_ok=True)
-        shutil.rmtree(paths.runtime_skill_dir, ignore_errors=True)
-        shutil.rmtree(paths.hooks_install_dir, ignore_errors=True)
         # Final sweep of the state dir (manifest, backups, handoff state).
         shutil.rmtree(paths.state_dir, ignore_errors=True)
     except Exception:
@@ -2151,6 +2398,108 @@ def _stage_command(paths: Paths, role: str, expected_line: str) -> str:
     )
 
 
+def _parse_native_smoke_events(stdout: str) -> Dict[str, Any]:
+    """Extract routing evidence from the stable ``codex exec --json`` envelope.
+
+    Multi-agent V2 wait events can be empty because completion is delivered via
+    the agent mailbox. The smoke parent is instructed to echo that callback, so
+    the final agent message is retained as the V2 response oracle.
+    """
+    parent_thread_id: Optional[str] = None
+    child_ids: List[str] = []
+    child_messages: Dict[str, str] = {}
+    final_message: Optional[str] = None
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "thread.started" and isinstance(event.get("thread_id"), str):
+            parent_thread_id = event["thread_id"]
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item") or {}
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in {"collab_tool_call", "collab_agent_tool_call"}:
+            tool = item.get("tool")
+            if tool in {"spawn_agent", "spawnAgent"}:
+                for child_id in item.get("receiver_thread_ids") or item.get(
+                    "receiverThreadIds"
+                ) or []:
+                    if isinstance(child_id, str) and child_id not in child_ids:
+                        child_ids.append(child_id)
+            if tool in {"wait", "wait_agent", "waitAgent"}:
+                states = item.get("agents_states") or item.get("agentsStates") or {}
+                if not isinstance(states, dict):
+                    continue
+                for receiver_id, state in states.items():
+                    if not isinstance(receiver_id, str) or not isinstance(state, dict):
+                        continue
+                    message = state.get("message")
+                    if state.get("status") == "completed" and isinstance(message, str):
+                        child_messages[receiver_id] = message.strip()
+        elif item_type == "agent_message" and isinstance(item.get("text"), str):
+            final_message = item["text"].strip()
+    return {
+        "parent_thread_id": parent_thread_id,
+        "child_ids": child_ids,
+        "child_messages": child_messages,
+        "final_message": final_message,
+    }
+
+
+def _recent_child_ids(
+    paths: Paths,
+    role: str,
+    model: str,
+    started_after_ms: int,
+    parent_thread_id: Optional[str],
+) -> List[str]:
+    """Recover a V2 child id when this Codex build omits collab JSONL items.
+
+    The query is deliberately strict and the caller still requires exactly one
+    result. It is a second transport for the identifier, not weaker route proof:
+    the marker and full provider/model/role metadata are validated afterwards.
+    """
+    child_ids: set[str] = set()
+    candidates: List[Tuple[float, Path]] = []
+    for state_db in paths.codex_home.glob("state_*.sqlite"):
+        try:
+            candidates.append((state_db.stat().st_mtime, state_db))
+        except OSError:
+            continue
+    required = {"id", "created_at_ms", "model_provider", "model", "agent_role"}
+    for _, state_db in sorted(candidates, reverse=True)[:MAX_STATE_DATABASES]:
+        try:
+            with sqlite3.connect(
+                f"{state_db.resolve().as_uri()}?mode=ro", uri=True, timeout=0.05
+            ) as connection:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(threads)").fetchall()
+                }
+                if not required.issubset(columns):
+                    continue
+                rows = connection.execute(
+                    """SELECT id FROM threads
+                       WHERE created_at_ms >= ?
+                         AND model_provider = ?
+                         AND model = ?
+                         AND agent_role = ?""",
+                    (started_after_ms, PROVIDER, model, role),
+                ).fetchall()
+        except (OSError, sqlite3.Error):
+            continue
+        for row in rows:
+            child_id = row[0]
+            if isinstance(child_id, str) and child_id != parent_thread_id:
+                child_ids.add(child_id)
+    return sorted(child_ids)
+
+
 def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> Dict[str, Any]:
     """Prove: Parent -> spawn_agent -> DeepSeek child -> callback, for one role."""
     parent_model = parent_config_snapshot(paths)["parent_model"]
@@ -2166,6 +2515,7 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
         "Then reply with only the final response of the subagent."
     )
     env = _smoke_env(paths)
+    started_after_ms = int(time.time() * 1000)
     try:
         proc = subprocess.run(
             [
@@ -2193,10 +2543,10 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
         ) from exc
     if proc.returncode != 0:
         stderr = proc.stderr[-1200:]
-        if "hook" in stderr.lower() and not hook_trusted(paths):
+        if "hook" in stderr.lower() and not hook_trusted(paths, codex_bin):
             raise ManagerError(
                 "hook_untrusted",
-                "The plaintext handoff hook has not been reviewed. Run /hooks in Codex and trust the hook, then retry.",
+                "The plaintext handoff hook has not been reviewed. Run /hooks in the interactive Codex CLI and trust the hook, then retry.",
                 {"stderr": stderr},
             )
         raise ManagerError(
@@ -2205,34 +2555,21 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
             {"stderr": stderr},
         )
 
-    child_ids: List[str] = []
-    child_messages: Dict[str, str] = {}
-    for line in proc.stdout.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        item = event.get("item") or {}
-        if (
-            event.get("type") == "item.completed"
-            and item.get("type") == "collab_tool_call"
-            and item.get("tool") == "spawn_agent"
-        ):
-            child_ids.extend(item.get("receiver_thread_ids") or [])
-        if (
-            event.get("type") == "item.completed"
-            and item.get("type") == "collab_tool_call"
-            and item.get("tool") == "wait"
-        ):
-            for receiver_id, state in (item.get("agents_states") or {}).items():
-                if not isinstance(state, dict):
-                    continue
-                message = state.get("message")
-                if state.get("status") == "completed" and isinstance(message, str):
-                    child_messages[receiver_id] = message.strip()
+    evidence = _parse_native_smoke_events(proc.stdout)
+    child_ids = evidence["child_ids"]
+    if not child_ids:
+        child_ids = _recent_child_ids(
+            paths,
+            role=role,
+            model=model,
+            started_after_ms=started_after_ms,
+            parent_thread_id=evidence["parent_thread_id"],
+        )
 
     child_id = child_ids[0] if len(child_ids) == 1 else None
-    child_message = child_messages.get(child_id) if child_id else None
+    child_message = evidence["child_messages"].get(child_id) if child_id else None
+    if child_id and not child_message:
+        child_message = evidence["final_message"]
     metadata = wait_for_child_metadata(paths, child_id) if child_id else None
     expected = {"model_provider": PROVIDER, "model": model, "agent_role": role}
     marker_ok = bool(child_message) and expected_line in child_message and "391" in child_message
@@ -2262,10 +2599,12 @@ def run_tests(paths: Paths, codex_bin: str) -> Dict[str, Any]:
     status = static_status(paths, codex_bin)
     if status["status"] not in {"configured", "ready"}:
         raise ManagerError("not_configured", "Static configuration is incomplete; live tests cannot run.", status)
-    if not hook_trusted(paths):
+    if not plugin_hook_available(paths):
+        raise ManagerError("plugin_hook_missing", "The Plugin Hook is not available; install or reload the Plugin before native smoke tests.")
+    if not hook_trusted(paths, codex_bin):
         raise ManagerError(
             "hook_untrusted",
-            "The plaintext handoff hook has not been reviewed yet. Open /hooks in Codex, trust the hook, then run test again.",
+            "The Plugin Hook has not been reviewed yet. Codex normally shows its review UI; use /hooks in the interactive CLI only as a fallback, then run test again.",
         )
     results: Dict[str, Any] = {}
     for role, model in SUPPORTED_ROLES.items():
@@ -2295,7 +2634,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("status", "setup", "test", "repair", "disable", "uninstall", "doctor"),
+        choices=("status", "setup", "test", "repair", "migrate", "disable", "uninstall", "doctor"),
     )
     parser.add_argument("--codex-home")
     parser.add_argument("--api-key-stdin", action="store_true")
@@ -2342,6 +2681,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     payload = repair(paths, codex_bin or "")
                 elif args.command == "test":
                     payload = run_tests(paths, codex_bin or "")
+                elif args.command == "migrate":
+                    payload = migrate_legacy(paths)
                 elif args.command == "disable":
                     payload = disable(paths)
                 else:

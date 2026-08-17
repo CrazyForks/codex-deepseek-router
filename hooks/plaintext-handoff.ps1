@@ -49,6 +49,10 @@ $strictUtf8WithoutBom = [System.Text.UTF8Encoding]::new($false, $true)
 
 function Stop-Handoff([string]$Message, [int]$Code) {
     [Console]::Error.WriteLine($Message)
+    if ($Mode -eq "hook") {
+        Write-Json ([ordered]@{ hookSpecificOutput = [ordered]@{ hookEventName = "SubagentStart"; additionalContext = "" } })
+        exit 0
+    }
     exit $Code
 }
 

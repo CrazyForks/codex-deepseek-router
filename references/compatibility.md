@@ -23,9 +23,10 @@ Default `CODEX_HOME` is `~/.codex`:
 - Dual-model registry: `$CODEX_HOME/models.json` (both
   `deepseek-v4-flash` and `deepseek-v4-pro`; never one without the other).
   The `model_catalog_json` pointer in `config.toml` is **not** changed.
-- Hook config: `$CODEX_HOME/hooks.json` (merged; unrelated hooks preserved).
-  Hook scripts: `$CODEX_HOME/hooks/codex-deepseek-router/`.
-- Runtime routing skill: `$CODEX_HOME/skills/use-deepseek-router/`.
+- Plugin manifest: `<plugin-root>/.codex-plugin/plugin.json`.
+- Plugin Hook: `<plugin-root>/hooks/hooks.json`, with `PLUGIN_ROOT`-relative scripts.
+- Explicit staging helper: `$CODEX_HOME/hooks/codex-deepseek-router/` (not a
+  registered Hook; removed by manager uninstall).
 - Manager state, backups, manifest and handoff state:
   `$CODEX_HOME/deepseek-router/`.
 - Credential target: `io.github.codex-deepseek-router.deepseek-api-key`
@@ -55,12 +56,11 @@ random challenge marker. Flash passing never implies Pro passing.
   stores the key in Credential Manager and injects it into `codex exec`
   smoke runs. For Desktop use, set `DEEPSEEK_API_KEY` as a user environment
   variable and fully restart the Codex app.
-- **Hook trust**: Codex requires the user to review the hook with `/hooks`.
-  The installer never writes or forges the trust record; after review Codex
-  itself records it in `config.toml`, which the manager detects
-  heuristically (presence of the installed script path).
-- **Inline hooks**: a `[hooks]` table inside `config.toml` is not merged by
-  this installer; migrate it to `hooks.json` or review manually.
+- **Hook trust**: Codex owns Plugin Hook discovery and trust. The manager only
+  reads public Hook metadata and reports whether the Plugin Hook is trusted;
+  `/hooks` is fallback UI only.
+- **Legacy hooks**: `migrate` removes only an exact entry whose existing script
+  bytes match this Plugin. Foreign matchers are left untouched.
 - **macOS Python identity**: setup records the exact Python executable in the
   generated agent auth block. Run `repair` after changing Python installations
   so Keychain reads continue under the identity that owns the item.

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/codex-deepseek-router/codex-deepseek-router/schemas/visual-context.schema.json",
+  "$id": "https://github.com/TheBlindM/codex-deepseek-router/schemas/visual-context.schema.json",
   "title": "VisualContextPacket",
   "description": "Parent-authored text facts about a visual input. The original visual source is never sent to DeepSeek.",
   "type": "object",

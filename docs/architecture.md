@@ -1,103 +1,83 @@
-# Architecture (developer notes)
+# Plugin-first Architecture
 
-This document explains the design decisions behind the V1 implementation;
-the user-facing picture is in
-`codex-deepseek-router/references/architecture.md`.
-
-## Why the installer never writes config.toml
-
-oil-oil's proven approach registers the DeepSeek provider in the top-level
-`config.toml` and pins the parent's `multi_agent_version` to `v1` so the
-spawn message stays plaintext. This project deliberately does neither:
-
-- The provider block lives inside each agent TOML (Utopia-V pattern): Codex
-  treats the agent file as the spawned session's config layer, so the parent
-  session keeps its own model/provider/login untouched. This is the
-  strongest possible "parent isolation" guarantee and avoids conflicts with
-  other tools that manage `config.toml` (catalog switchers, other subagent
-  installers).
-- Forcing V1 changes the whole parent session's multi-agent implementation
-  as a side effect. We keep V2 and solve the actual problem — the
-  cross-provider ciphertext carrier — with the one-shot plaintext
-  `SubagentStart` hook, which is per-spawn and leaves the session alone.
-
-Consequence: `setup` can install next to oil-oil or Utopia-V installations
-without touching their configuration.
-
-## Model catalog
-
-`~/.codex/models.json` is a router-managed dual-model registry (both
-`deepseek-v4-flash` and `deepseek-v4-pro`, always together). Current Codex
-builds only consult a catalog through the `model_catalog_json` pointer in
-`config.toml`; since we never touch that pointer, the registry is inert for
-the live runtime (agents self-declare their models) and serves as the
-authoritative record, machine-readable model metadata, and the upgrade path
-for a future native transport. `codex exec` smoke runs can pass
-`-c model_catalog_json=...` as a per-invocation override if needed without
-modifying user configuration.
-
-## Transaction system
-
-All mutating commands run under `state_dir/manager.lock` (fcntl/msvcrt
-non-blocking with retry) and follow:
+Codex remains the parent agent and final decision maker. The Plugin owns
+discovery and lifecycle; Skills describe behavior; Hooks are thin lifecycle
+triggers; Runtime performs context packaging, model selection and explicit
+provider execution.
 
 ```text
-lock -> snapshot backup -> generate candidate -> parse/validate ->
-atomic replace -> verify -> commit manifest
+Codex parent
+    |
+    +-- Plugin manifest (.codex-plugin/plugin.json)
+    |       +-- skills/deepseek-router       management
+    |       +-- skills/use-deepseek-router   delegation workflow
+    |       +-- hooks/hooks.json              native lifecycle trigger
+    |       +-- runtime/                      explicit fallback execution
+    |
+    +-- native agents
+            +-- deepseek_flash -> deepseek-v4-flash
+            +-- deepseek_pro   -> deepseek-v4-pro
 ```
 
-Any failure restores the snapshot and re-raises. Targets: config.toml
-(snapshot only), models.json, both agent TOMLs, hooks.json, hook scripts,
-runtime skill, manifest. Foreign content that differs from our managed
-content is a `conflict`, never overwritten; byte-identical content is
-adopted (`adopted_existing`) and restored rather than deleted on uninstall
-when it pre-existed.
+## Ownership boundaries
 
-## Handoff state machine
+| Layer | Responsibility | Does not do |
+|---|---|---|
+| Plugin | manifest, Skill/Hook discovery, review/trust UI | store API keys or modify private Codex state |
+| Management Skill | setup, status, doctor, migration and uninstall workflow | write Hook config or trust hashes |
+| Routing Skill | modality, policy, context and Flash/Pro selection | expose chain-of-thought or bypass parent validation |
+| Hook | parse `SubagentStart`, claim one-shot handoff, return context | call the API or build large prompts |
+| Runtime | context budget, sanitizer, router, client, errors and usage | become the parent decision maker |
 
-Per role (`deepseek_flash` / `deepseek_pro`), so one pending assignment per
-role and cross-role misdelivery is impossible by construction:
+## Hook lifecycle
+
+`hooks/hooks.json` is shipped with the Plugin and uses `PLUGIN_ROOT` for all
+script paths. `setup` never writes `~/.codex/hooks.json`, `.codex/hooks.json`,
+trust hashes or Codex databases. Codex discovers the Plugin Hook and asks the
+user to review it. `/hooks` is only a fallback for Codex versions that do not
+surface the native prompt.
+
+When the Hook is disabled or untrusted, the parent can call
+`runtime/cli.py --mode auto|flash|pro`. The runtime returns a structured error
+and the parent continues its task when DeepSeek is unavailable.
+
+## Parent isolation
+
+DeepSeek provider blocks remain inside the two Agent TOMLs. The manager never
+changes the parent's `config.toml`, parent model, provider or login. The model
+catalog records both models but does not force a global model switch.
+
+## Handoff state
+
+Each role has an independent one-shot state machine:
 
 ```text
-absent -> pending (stage, TTL 300s) -> claimed.<agent_id>.<uuid> (atomic
-rename) -> validated -> delivered via additionalContext -> consumed
+absent -> pending -> claimed -> validated -> delivered -> consumed
+                       \\-> failed/quarantined
 ```
 
-Malformed claims move to `failed.*` quarantine and block the role until a
-human resolves them (or TTL expiry cleans structurally valid leftovers).
-`stage` refuses to run when a claim/quarantine is active; expired pending
-files may be replaced. `os.link` provides no-clobber publish on POSIX; the
-PowerShell variant uses exclusive `FileShare.None` handles.
+Claims are atomic, bounded and TTL-protected. A malformed or expired payload
+cannot be delivered to the other role. The Hook catches invalid JSON and
+transport failures so a failed DeepSeek handoff does not terminate the parent
+task.
 
-## Smoke oracle
+## Context and output
 
-`test` runs one smoke per role. The parent prompt stages a marker-bearing
-assignment through the installed handoff script, spawns the child with
-`fork_turns="none"`, waits natively, and returns the child's final message.
-The oracle requires **both**: the returned message contains the random
-marker and the computed result, and `state_*.sqlite` contains a `threads`
-row with `model_provider=deepseek`, the expected `model`, and the expected
-`agent_role`. Direct DeepSeek HTTP calls are never used as success evidence.
-Flash passing never implies Pro passing.
+The Runtime packages task, relevant files, diff, constraints and expected
+output under model-specific budgets. Binary and image inputs are withheld;
+Codex must provide a parent-generated visual description. Responses use a
+stable JSON contract (`summary`, `findings`, `reasoning_summary`, `risks`,
+`recommendations`, `confidence`, and observed/inferred/recommended/uncertain
+evidence) without requiring chain-of-thought.
 
-## Failure model mapping
+## Migration and uninstall
 
-| Surface symptom | Failure code |
-|---|---|
-| no key anywhere | `credential_missing` |
-| hook not reviewed | `hook_untrusted` |
-| no pending file at SubagentStart | `handoff_missing` |
-| pending expired before claim | `handoff_expired` |
-| second stage while pending | `handoff_conflict` (busy) |
-| spawn produced no child thread | `child_start_failed` |
-| smoke ran past deadline | `child_timeout` |
-| marker or metadata mismatch | `native_route_mismatch` |
-| foreign config at install target | `config_conflict` |
-| concurrent manager run | `operation_in_progress` |
+`migrate` removes only an exact legacy router entry identified by its matcher,
+command shape and owned script identity. A conflicting entry is reported and
+left untouched. `uninstall` removes manager-owned Agents, model catalog and
+fallback staging helpers; Plugin Skills and Hook files are removed by Codex's
+Plugin uninstall flow. Credentials are retained unless `--remove-credential`
+is explicitly passed.
 
-## V1 exclusions (by design)
-
-No daemon, server, database, MCP, proxy, custom agent runtime, learned
-router, dynamic tool-schema rewriting, or parallel same-role children. The
-transport probe contract keeps a future `native` mode as a drop-in
-replacement for the hook.
+No daemon, database service, Redis, MCP server, proxy or custom trust system is
+introduced.

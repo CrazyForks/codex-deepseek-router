@@ -28,15 +28,18 @@ manager.
 Requirements: Node.js/npm, Python 3.9+, the Codex desktop app started at least
 once, and a DeepSeek API key.
 
-### 1. Install the management skill
+### 1. Install the Plugin
 
 ```bash
-npx skills add TheBlindM/codex-deepseek-router -g -y
+codex plugin marketplace add TheBlindM/codex-deepseek-router
+codex plugin add codex-deepseek-router@deepseek-router
 ```
 
-This runs the open [`skills` CLI](https://github.com/vercel-labs/skills) to
-install the Skill from GitHub; this project does not publish a separate npm
-package.
+`deepseek-router` is the real Marketplace name declared in
+`.agents/plugins/marketplace.json`; it is not a placeholder.
+
+The Plugin provides the management Skill, routing Skill, and native Hook. It
+does not write a Hook into `~/.codex/hooks.json`.
 
 ### 2. Configure it inside Codex
 
@@ -52,9 +55,11 @@ enters command arguments, configuration files, or chat echo.
 
 ### 3. Review and verify
 
-1. Run `/hooks` in Codex and review the new hook before trusting it.
+1. Restart Codex or start a new task and review/trust the Hook in Codex's native
+   Plugin Hook UI.
 2. Ask Codex to run the live router test; Flash and Pro must pass separately.
-3. Once the result is `ready`, restart the app and open a new task.
+3. If the review prompt is not shown by the current Codex version, use `/hooks`
+   in the interactive CLI as a fallback.
 
 Then use it naturally:
 
@@ -97,8 +102,9 @@ The manager:
 
 - installs `deepseek-flash.toml` and `deepseek-pro.toml` together;
 - registers both models in `~/.codex/models.json`;
-- merges the handoff hook into `~/.codex/hooks.json` while preserving unrelated hooks;
-- installs the `use-deepseek-router` runtime skill;
+- exposes `skills/` and `hooks/hooks.json` from the Plugin; Hook commands use
+  `PLUGIN_ROOT` and never depend on a user's cwd or absolute paths;
+- configures only credentials, Agents, the model catalog, and explicit fallback runtime;
 - stores the key in the system credential store and rolls back every managed change on failure;
 - never changes the parent's `config.toml` or forges hook trust.
 
@@ -120,7 +126,8 @@ environment variable and require a full Codex restart after it is set.
 | `setup` | Install every component idempotently and transactionally |
 | `test` | Run independent native dispatch proofs for Flash and Pro |
 | `repair` | Recover after parent-model upgrades, Codex updates, or drift |
-| `disable` | Remove only the routing hook; preserve credentials, catalog, and backups |
+| `migrate` | Precisely remove a legacy Skill-first global Hook without touching unrelated Hooks |
+| `disable` | Record disabled intent; Plugin Hook lifecycle remains owned by Codex |
 | `uninstall` | Remove project-owned content; keep the API key by default |
 | `doctor` | Diagnose the environment, hook trust, and handoff state |
 
@@ -134,19 +141,19 @@ means an unexpected failure.
 ```bash
 git clone https://github.com/TheBlindM/codex-deepseek-router.git
 cd codex-deepseek-router
-python3 codex-deepseek-router/scripts/codex_deepseek_router.py status --json
+python3 scripts/codex_deepseek_router.py status --json
 ```
 
 Pass the key through stdin only:
 
 ```bash
-printf '%s\n' '<your-key>' | python3 codex-deepseek-router/scripts/codex_deepseek_router.py setup --api-key-stdin --json
+printf '%s\n' '<your-key>' | python3 scripts/codex_deepseek_router.py setup --api-key-stdin --json
 ```
 
-After reviewing the hook, run the live proof:
+After Codex's native Plugin Hook review (or the CLI `/hooks` fallback), run the live proof:
 
 ```bash
-python3 codex-deepseek-router/scripts/codex_deepseek_router.py test --json
+python3 scripts/codex_deepseek_router.py test --json
 ```
 
 `test` proves the expected `model_provider`, model, and agent role for each
@@ -157,11 +164,11 @@ Pro passing.
 
 ## Documentation
 
-- [Architecture](codex-deepseek-router/references/architecture.md) ·
-  [routing policy](codex-deepseek-router/references/routing-policy.md) ·
-  [multimodal boundary](codex-deepseek-router/references/multimodal.md)
-- [Compatibility](codex-deepseek-router/references/compatibility.md) ·
-  [security](codex-deepseek-router/references/security.md) ·
+- [Architecture](references/architecture.md) ·
+  [routing policy](references/routing-policy.md) ·
+  [multimodal boundary](references/multimodal.md)
+- [Compatibility](references/compatibility.md) ·
+  [security](references/security.md) ·
   [troubleshooting](docs/troubleshooting.md)
 - [Design decisions](docs/architecture.md) · [evaluation](docs/eval.md) ·
   [upstream source map](docs/upstream-reference-map.md)

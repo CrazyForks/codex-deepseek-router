@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "codex-deepseek-router"
+PACKAGE = ROOT
 sys.path.insert(0, str(PACKAGE / "scripts"))
 sys.path.insert(0, str(PACKAGE / "hooks"))
 
@@ -59,4 +59,4 @@ def handoff_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def trusted(monkeypatch):
     """Pretend the user reviewed the hook with /hooks."""
-    monkeypatch.setattr(manager, "hook_trusted", lambda paths: True)
+    monkeypatch.setattr(manager, "hook_trusted", lambda paths, codex_bin=None: True)

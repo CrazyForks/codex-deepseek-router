@@ -28,8 +28,9 @@ machine-readable inputs to translate, not as a reason to switch languages.
   model switching via repair.
 - DeepSeek children are text-only. Never send original images, screenshots or
   video to them; the parent inspects visual inputs and passes text facts.
-- Task delivery uses the plaintext `SubagentStart` handoff hook. The hook must
-  be reviewed by the user with `/hooks`; the installer never forges trust.
+- Task delivery uses the Plugin-owned plaintext `SubagentStart` hook. Codex
+  owns discovery, review and trust; the installer never writes global Hook
+  configuration or forges trust.
 - Everyday delegation is a single native call:
   `spawn_agent(agent_type="deepseek_flash" | "deepseek_pro", fork_turns="none")`
   after staging the assignment with the handoff script. Do not use the
@@ -53,8 +54,9 @@ machine-readable inputs to translate, not as a reason to switch languages.
    metadata (`model_provider=deepseek`, correct `model`, correct
    `agent_role`) plus a random challenge marker. Flash passing never implies
    Pro passing — both must pass separately.
-4. If the result carries `hook_review_required`, tell the user to run `/hooks`
-   and review/trust the hook before running `test`.
+4. If the result carries `hook_review_required`, tell the user to restart or
+   open a new task so Codex can show the native Plugin Hook review UI. The
+   interactive CLI `/hooks` command is a fallback only when that UI is absent.
 5. If the result carries `restart_required` or `new_task_required`, tell the
    user to restart the Codex desktop app and open a new task.
 6. After a parent model upgrade or a Codex update, run `repair --json`.
@@ -71,14 +73,15 @@ python3 <skill-dir>/scripts/codex_deepseek_router.py <command> --json
 
 - `status` — read-only check of runtime, agents, catalog, credential, hook
   and parent isolation.
-- `setup` — install both agents, the dual-model catalog, the runtime routing
-  skill and the plaintext handoff hook; never touches the parent model or
-  provider. Requires the API key via `--api-key-stdin` when missing.
+- `setup` — configure credentials, both agents and the dual-model catalog;
+  Plugin Skills and Hooks are discovered by Codex and are never copied into
+  global Hook configuration. Requires the API key via `--api-key-stdin` when missing.
 - `test` — live dual-agent smoke tests through the desktop Codex runtime.
 - `repair` — idempotently re-apply the managed configuration and refresh the
   recorded parent snapshot (use after parent model upgrades).
-- `disable` — remove only the routing hook entry; keep credentials, catalog,
-  agents and backups.
+- `migrate` — remove only a precisely recognized legacy global Hook.
+- `disable` — record that automatic routing is disabled; Plugin removal owns
+  the Hook itself.
 - `uninstall` — remove everything this project owns; the API key is kept
   unless `--remove-credential` is passed.
 - `doctor` — diagnostics for the environment, hook trust and handoff state.
@@ -100,7 +103,7 @@ binary.
   and retry, never modify concurrently.
 - `conflict` — report the conflicting file/field and wait for the user's
   decision; never overwrite silently.
-- `hook_untrusted` — the user must review the hook with `/hooks`.
+- `hook_untrusted` — review the Plugin Hook in Codex; `/hooks` is fallback only.
 - `unsupported` — report the missing capability; do not bypass it by hand.
 
 More detail: [references/compatibility.md](references/compatibility.md),

@@ -98,12 +98,25 @@ why, and the minimal next step.
 8. Stage the complete assignment through the installed handoff script in
    `stage` mode, then spawn with the exact agent type and
    `fork_turns="none"`:
-   - stage: `python3 <codex-home>/hooks/codex-deepseek-router/plaintext_handoff.py --mode stage --agent-type <role> --policy <POLICY> --modality <MODALITY --state-directory <codex-home>/deepseek-router/handoff` with the assignment on stdin
+   - stage: `python3 <codex-home>/hooks/codex-deepseek-router/plaintext_handoff.py --mode stage --agent-type <role> --policy <POLICY> --modality <MODALITY> --state-directory <codex-home>/deepseek-router/handoff` with the assignment on stdin. This is only a local staging helper; the SubagentStart Hook is supplied by the Plugin.
    - spawn: `spawn_agent(agent_type="deepseek_flash|deepseek_pro", fork_turns="none")`
 9. Receive the child through Codex's native wait/callback path. Do not
    short-poll or re-run the child work while it runs.
 10. Validate the returned contribution in proportion to the claim.
 11. Integrate the final answer in the parent.
+
+## Hook-disabled fallback
+
+When Plugin Hooks are unavailable or untrusted, make an explicit text-only
+request through the standalone runtime:
+
+```text
+printf '%s' '{"task":"...","context":{}}' | python3 <plugin-root>/runtime/cli.py --mode auto
+```
+
+Use `--mode flash` or `--mode pro` for an explicit user choice. Structured
+provider failures are advisory; Codex continues the parent task and remains
+the final decision maker.
 
 Require a successful stage result naming the exact role before spawning.
 Treat a lock contender, an active pending or claimed item, quarantined

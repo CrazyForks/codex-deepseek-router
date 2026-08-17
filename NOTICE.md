@@ -31,11 +31,11 @@ in [LICENSE](LICENSE). Where source code from those repositories has been
 adapted, the corresponding copyright notices are preserved in the file
 headers of the affected files:
 
-- `codex-deepseek-router/scripts/codex_deepseek_router.py` —
+- `scripts/codex_deepseek_router.py` —
   adapted from `oil-oil/codex-deepseek-subagent`
   `codex-deepseek-subagent/scripts/codex_deepseek.py` (MIT).
-- `codex-deepseek-router/hooks/plaintext_handoff.py` and
-  `codex-deepseek-router/hooks/plaintext-handoff.ps1` —
+- `hooks/plaintext_handoff.py` and
+  `hooks/plaintext-handoff.ps1` —
   adapted from `Utopia-V/codex-deepseek-subagent`
   `hooks/plaintext_handoff.py` and `hooks/plaintext-handoff.ps1` (MIT).
 
