@@ -493,10 +493,12 @@ def credential_backend() -> Optional[str]:
 
 
 def credential_present() -> bool:
+    if os.environ.get(API_KEY_ENV):
+        return True
     backend = credential_backend()
     if backend is None:
         # Linux V1: environment variable only.
-        return bool(os.environ.get(API_KEY_ENV))
+        return False
     try:
         return read_credential_key() is not None
     except ManagerError:
@@ -647,9 +649,11 @@ def _windows_remove_credential() -> bool:
 def read_credential_key() -> Optional[str]:
     backend = credential_backend()
     if backend == "macos-keychain":
-        return _macos_read_credential()
+        stored = _macos_read_credential()
+        return stored if stored is not None else os.environ.get(API_KEY_ENV)
     if backend == "windows-credential-manager":
-        return _windows_read_credential()
+        stored = _windows_read_credential()
+        return stored if stored is not None else os.environ.get(API_KEY_ENV)
     return os.environ.get(API_KEY_ENV)
 
 
@@ -1690,6 +1694,24 @@ def _smoke_env(paths: Paths) -> Dict[str, str]:
     return env
 
 
+def _stage_command(paths: Paths, role: str, expected_line: str) -> str:
+    """The parent runs this exact command with the Bash tool before spawning."""
+    if platform_name() == "windows":
+        ps1 = paths.hooks_install_dir / "plaintext-handoff.ps1"
+        return (
+            f"printf '%s' 'Compute 17*23 and reply exactly this line: {expected_line} 391' | "
+            f'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass '
+            f'-File "{ps1}" -Mode stage -AgentType {role} -Policy FAST '
+            f'-Modality TEXT_ONLY -StateDirectory "{paths.handoff_dir}"'
+        )
+    handoff_script = paths.hooks_install_dir / "plaintext_handoff.py"
+    return (
+        f"printf '%s' 'Compute 17*23 and reply exactly this line: {expected_line} 391' | "
+        f'python3 "{handoff_script}" --mode stage --agent-type {role} --policy FAST '
+        f'--modality TEXT_ONLY --state-directory "{paths.handoff_dir}"'
+    )
+
+
 def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> Dict[str, Any]:
     """Prove: Parent -> spawn_agent -> DeepSeek child -> callback, for one role."""
     parent_model = parent_config_snapshot(paths)["parent_model"]
@@ -1697,12 +1719,7 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
         raise ManagerError("parent_model_unconfigured", "config.toml has no explicit parent model.")
     marker = uuid.uuid4().hex
     expected_line = f"NATIVE_{role.upper()}_OK {marker}"
-    handoff_script = paths.hooks_install_dir / "plaintext_handoff.py"
-    stage_command = (
-        f"printf '%s' 'Compute 17*23 and reply exactly this line: {expected_line} 391' | "
-        f'python3 "{handoff_script}" --mode stage --agent-type {role} --policy FAST '
-        f'--modality TEXT_ONLY --state-directory "{paths.handoff_dir}"'
-    )
+    stage_command = _stage_command(paths, role, expected_line)
     prompt = (
         f"Run this exact command with the Bash tool:\n{stage_command}\n"
         f"Then use the spawn_agent tool exactly once with agent_type {role} and fork_turns none.\n"
@@ -1718,7 +1735,7 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
                 "--skip-git-repo-check",
                 "--json",
                 "-s",
-                "read-only",
+                "workspace-write",
                 "-C",
                 str(paths.codex_home),
                 "-m",
