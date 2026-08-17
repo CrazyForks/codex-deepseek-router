@@ -323,6 +323,33 @@ def test_setup_lifecycle(paths, fake_codex, no_credentials):
     assert paths.config.read_text() == before
 
 
+def test_setup_reads_utf8_when_platform_default_is_cp1252(
+    paths, fake_codex, no_credentials, monkeypatch
+):
+    """Reproduce Windows runners where Path.read_text defaults to CP1252."""
+    original_read_text = Path.read_text
+
+    def cp1252_default(path, encoding=None, errors=None):
+        return original_read_text(
+            path,
+            encoding=encoding or "cp1252",
+            errors=errors,
+        )
+
+    monkeypatch.setattr(Path, "read_text", cp1252_default)
+
+    payload = manager.setup(
+        paths,
+        fake_codex,
+        api_key_stdin=False,
+        skip_live_test=True,
+    )
+
+    assert payload["status"] == "configured"
+    hooks = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
+    assert "正在传递" in hooks["hooks"]["SubagentStart"][0]["hooks"][0]["statusMessage"]
+
+
 def test_setup_rolls_back_on_conflict(paths, fake_codex, no_credentials):
     before = paths.config.read_text()
     paths.agents_dir.mkdir(parents=True)

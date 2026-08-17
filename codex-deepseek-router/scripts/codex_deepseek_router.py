@@ -323,7 +323,7 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def sha256_text_file(path: Path) -> str:
-    normalized = path.read_text().replace("\r\n", "\n").replace("\r", "\n")
+    normalized = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
     return sha256_bytes(normalized.encode())
 
 
@@ -1099,7 +1099,7 @@ def read_manifest(paths: Paths) -> Dict[str, Any]:
     if not paths.manifest.is_file():
         return {}
     try:
-        payload = json.loads(paths.manifest.read_text())
+        payload = json.loads(paths.manifest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
@@ -1314,7 +1314,7 @@ def install_agent(paths: Paths, spec: AgentSpec, manifest: Dict[str, Any]) -> bo
             f"Existing agent file differs from the router-managed target: {target}",
             {"path": str(target)},
         )
-    if target.is_file() and target.read_text() == text:
+    if target.is_file() and target.read_text(encoding="utf-8") == text:
         return False
     atomic_write(target, data, mode=0o644)
     return True
@@ -1329,7 +1329,7 @@ def install_catalog(paths: Paths, manifest: Dict[str, Any]) -> bool:
             f"Existing model catalog differs from the router-managed target: {paths.catalog}",
             {"path": str(paths.catalog)},
         )
-    if paths.catalog.is_file() and paths.catalog.read_text() == data.decode():
+    if paths.catalog.is_file() and paths.catalog.read_text(encoding="utf-8") == data.decode("utf-8"):
         return False
     atomic_write(paths.catalog, data)
     return True
@@ -1347,7 +1347,7 @@ def install_runtime_skill(paths: Paths, manifest: Dict[str, Any]) -> bool:
             f"Existing runtime skill differs from the router-managed target: {target}",
             {"path": str(target)},
         )
-    if target.is_file() and target.read_text() == data.decode():
+    if target.is_file() and target.read_text(encoding="utf-8") == data.decode("utf-8"):
         return False
     atomic_write(target, data, mode=0o644)
     return True
@@ -1516,7 +1516,7 @@ def install_hook_config(paths: Paths, manifest: Dict[str, Any]) -> Tuple[bool, b
     Returns (changed, adopted_existing).
     """
     if paths.config.is_file():
-        if toml_has_table(paths.config.read_text(), "hooks"):
+        if toml_has_table(paths.config.read_text(encoding="utf-8"), "hooks"):
             raise ManagerError(
                 "inline_hook_config_unsupported",
                 "config.toml already contains inline hook configuration. This router does not "
@@ -1527,7 +1527,7 @@ def install_hook_config(paths: Paths, manifest: Dict[str, Any]) -> Tuple[bool, b
     existing: Dict[str, Any] = {}
     if paths.hooks_config.is_file():
         try:
-            existing = json.loads(paths.hooks_config.read_text())
+            existing = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise ManagerError("conflict", f"Existing hooks.json is not valid JSON: {exc}") from exc
         if not isinstance(existing, dict):
@@ -1541,7 +1541,10 @@ def install_hook_config(paths: Paths, manifest: Dict[str, Any]) -> Tuple[bool, b
             atomic_write(paths.hooks_config, data)
         return changed, adopted
     data = (json.dumps(ours, ensure_ascii=False, indent=2) + "\n").encode()
-    changed = not paths.hooks_config.is_file() or paths.hooks_config.read_text() != data.decode()
+    changed = (
+        not paths.hooks_config.is_file()
+        or paths.hooks_config.read_text(encoding="utf-8") != data.decode("utf-8")
+    )
     if changed:
         atomic_write(paths.hooks_config, data)
     return changed, False
@@ -1558,7 +1561,7 @@ def hook_trusted(paths: Paths) -> bool:
         return False
     script = paths.hooks_install_dir / "plaintext_handoff.py"
     ps1 = paths.hooks_install_dir / "plaintext-handoff.ps1"
-    text = paths.config.read_text()
+    text = paths.config.read_text(encoding="utf-8")
     return str(script) in text or str(ps1) in text
 
 
@@ -1567,7 +1570,7 @@ def hook_entry_present(paths: Paths) -> bool:
     if not paths.hooks_config.is_file():
         return False
     try:
-        config = json.loads(paths.hooks_config.read_text())
+        config = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     entries = (config.get("hooks") or {}).get("SubagentStart") if isinstance(config, dict) else None
@@ -1626,7 +1629,7 @@ def compute_asset_hashes(paths: Paths) -> Dict[str, str]:
 def parent_config_snapshot(paths: Paths) -> Dict[str, Optional[str]]:
     if not paths.config.is_file():
         return {"parent_model": None, "parent_provider": None}
-    text = paths.config.read_text()
+    text = paths.config.read_text(encoding="utf-8")
     return {
         "parent_model": toml_get_top_level_string(text, "model"),
         "parent_provider": toml_get_top_level_string(text, "model_provider"),
@@ -1636,7 +1639,7 @@ def parent_config_snapshot(paths: Paths) -> Dict[str, Optional[str]]:
 def agent_status(paths: Paths, manifest: Dict[str, Any], spec: AgentSpec) -> Dict[str, Any]:
     target = paths.agent_path(spec.role)
     hash_key = "flash_agent" if spec.role == FLASH_ROLE else "pro_agent"
-    valid = target.is_file() and target.read_text() == agent_toml_text(spec)
+    valid = target.is_file() and target.read_text(encoding="utf-8") == agent_toml_text(spec)
     return {
         "installed": target.is_file(),
         "valid": valid,
@@ -1649,7 +1652,7 @@ def catalog_status(paths: Paths) -> Dict[str, Any]:
     registered = False
     if paths.catalog.is_file():
         try:
-            data = json.loads(paths.catalog.read_text())
+            data = json.loads(paths.catalog.read_text(encoding="utf-8"))
             slugs = {item.get("slug") for item in data.get("models", [])}
             registered = all(model in slugs for model in SUPPORTED_ROLES.values())
         except (OSError, json.JSONDecodeError):
@@ -1920,7 +1923,7 @@ def remove_our_hook_entry(paths: Paths, manifest: Dict[str, Any]) -> bool:
     if not paths.hooks_config.is_file():
         return False
     try:
-        config = json.loads(paths.hooks_config.read_text())
+        config = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ManagerError("conflict", f"hooks.json is not valid JSON: {exc}") from exc
     if not isinstance(config, dict):
@@ -1997,7 +2000,7 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
         # If hooks.json was created by us and no hooks remain, remove the file.
         if not manifest.get("preexisted", {}).get("hook_config") and paths.hooks_config.is_file():
             try:
-                remaining = json.loads(paths.hooks_config.read_text())
+                remaining = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 remaining = None
             if isinstance(remaining, dict) and not remaining.get("hooks"):
@@ -2043,7 +2046,10 @@ def doctor(paths: Paths, codex_bin: Optional[str]) -> Dict[str, Any]:
         handoff_state["active_pending"] = any(name.endswith(".pending.json") for name in names)
     top_level_deepseek_provider = False
     if paths.config.is_file():
-        top_level_deepseek_provider = toml_has_table(paths.config.read_text(), f"model_providers.{PROVIDER}")
+        top_level_deepseek_provider = toml_has_table(
+            paths.config.read_text(encoding="utf-8"),
+            f"model_providers.{PROVIDER}",
+        )
     payload = {
         **status,
         "handoff_state": handoff_state,
