@@ -497,11 +497,64 @@ def test_python_and_powershell_protocol_parity():
     for shape in (".pending.json", ".claimed.", ".failed.", ".lock"):
         assert shape in py_source and shape in ps1_source
 
-    expected_codes = {"2", "3", "4", "5", "6", "8", "9", "10", "11", "12", "13"}
-    py_exit_codes = set(re.findall(r"fail\([^,]+,\s*(\d+)\)", py_source))
-    # The PowerShell script funnels every failure through Stop-Handoff,
-    # which calls `exit $Code`; collect the literal code arguments instead.
-    ps1_exit_codes = set(re.findall(r'Stop-Handoff "[^"]*"\s+(\d+)', ps1_source))
-    ps1_exit_codes |= set(re.findall(r"exit (\d+)", ps1_source))
-    assert expected_codes <= py_exit_codes
-    assert expected_codes <= ps1_exit_codes
+    # Assert semantic error -> exit-code mappings, not merely that each number
+    # appears somewhere in both implementations.
+    error_contract = {
+        "invalid stage input": (
+            r'Refusing to stage an empty assignment\.", 2\)',
+            r'Refusing to stage an empty assignment\." 2',
+        ),
+        "stage busy": (
+            r"except HandoffBusy as error:\s+fail\(str\(error\), 3\)",
+            r'already pending\.[^"]*" 3',
+        ),
+        "invalid hook input": (
+            r'hook input was invalid JSON:[^\n]+, 4\)',
+            r'hook input was invalid JSON\." 4',
+        ),
+        "malformed claim": (
+            r"except HandoffMalformed as error:\s+fail\(str\(error\), 5\)",
+            r'malformed or has an invalid schema\." 5',
+        ),
+        "expired claim": (
+            r"except HandoffExpired as error:\s+fail\(str\(error\), 6\)",
+            r'expired before the child started\." 6',
+        ),
+        "invalid CLI arguments": (
+            r'ttl-seconds must be between 1 and 3600\.\", 8\)',
+            r'TtlSeconds must be between 1 and 3600\." 8',
+        ),
+        "corrupt pending state": (
+            r"except HandoffCorrupt as error:\s+fail\(str\(error\), 9\)",
+            r'handoff is malformed\. Refusing to replace it\." 9',
+        ),
+        "missing handoff": (
+            r"except HandoffMissing as error:\s+fail\(str\(error\), 10\)",
+            r'No plaintext handoff was available[^\"]*" 10',
+        ),
+        "claimed handoff busy": (
+            r"except HandoffBusy as error:\s+fail\(str\(error\), 11\)",
+            r'already claimed or quarantined for[^\"]*" 11',
+        ),
+        "transport failure": (
+            r'Plaintext handoff transport failure[^\n]+, 12\)',
+            r'Plaintext handoff transport failure[^\"]*" 12',
+        ),
+        "lock contention": (
+            r"except HandoffLocked as error:\s+fail\(str\(error\), 13\)",
+            r'state transition is already in progress\." 13',
+        ),
+    }
+    for label, (python_pattern, powershell_pattern) in error_contract.items():
+        assert re.search(python_pattern, py_source), f"Python mapping drifted: {label}"
+        assert re.search(powershell_pattern, ps1_source), f"PowerShell mapping drifted: {label}"
+
+    assert re.search(
+        r"if not 1 <= args\.ttl_seconds <= 3600:\s+fail\([^\n]+, 8\)",
+        py_source,
+    )
+    assert re.search(
+        r"if \(\$TtlSeconds -lt 1 -or \$TtlSeconds -gt 3600\) \{\s+"
+        r'Stop-Handoff "TtlSeconds must be between 1 and 3600\." 8',
+        ps1_source,
+    )

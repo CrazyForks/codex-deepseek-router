@@ -23,14 +23,16 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -78,6 +80,7 @@ PRO_MODEL = "deepseek-v4-pro"
 PROVIDER = "deepseek"
 BASE_URL = "https://api.deepseek.com"
 WIRE_API = "responses"
+HASH_VERSION_EXACT_BYTES = 2
 API_KEY_ENV = "DEEPSEEK_API_KEY"
 
 SUPPORTED_ROLES = {
@@ -324,6 +327,11 @@ def sha256_text_file(path: Path) -> str:
     return sha256_bytes(normalized.encode())
 
 
+def sha256_file(path: Path) -> str:
+    """Hash exact bytes for ownership and transaction integrity checks."""
+    return sha256_bytes(path.read_bytes())
+
+
 def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -548,6 +556,8 @@ def _macos_security_framework():
 
     security.SecItemAdd.argtypes = [c_void_p, ctypes.POINTER(c_void_p)]
     security.SecItemAdd.restype = ctypes.c_int32
+    security.SecItemUpdate.argtypes = [c_void_p, c_void_p]
+    security.SecItemUpdate.restype = ctypes.c_int32
     security.SecItemDelete.argtypes = [c_void_p]
     security.SecItemDelete.restype = ctypes.c_int32
 
@@ -569,11 +579,35 @@ def _macos_security_framework():
     return security, core_foundation, ctypes
 
 
+def _macos_security_constants(security, core_foundation, ctypes) -> Dict[str, int]:
+    """Resolve Security/CoreFoundation constants as their exported pointers."""
+
+    def exported_pointer(library, name: str) -> int:
+        value = ctypes.c_void_p.in_dll(library, name).value
+        if value is None:
+            raise ValueError(f"macOS framework symbol {name} was null")
+        return value
+
+    def exported_struct(library, name: str) -> int:
+        return ctypes.addressof(ctypes.c_byte.in_dll(library, name))
+
+    return {
+        "class": exported_pointer(security, "kSecClass"),
+        "generic_password": exported_pointer(security, "kSecClassGenericPassword"),
+        "service": exported_pointer(security, "kSecAttrService"),
+        "account": exported_pointer(security, "kSecAttrAccount"),
+        "value_data": exported_pointer(security, "kSecValueData"),
+        "key_callbacks": exported_struct(core_foundation, "kCFTypeDictionaryKeyCallBacks"),
+        "value_callbacks": exported_struct(core_foundation, "kCFTypeDictionaryValueCallBacks"),
+    }
+
+
 def _macos_store_credential(secret: str) -> None:
     """Store the API key through SecItemAdd. The secret never enters argv."""
     try:
         security, cf, ctypes = _macos_security_framework()
-    except OSError as exc:
+        constants = _macos_security_constants(security, cf, ctypes)
+    except (OSError, ValueError) as exc:
         raise ManagerError(
             "credential_write_failed",
             f"Could not load Security.framework: {exc}",
@@ -589,56 +623,61 @@ def _macos_store_credential(secret: str) -> None:
     def dictionary(entries):
         keys = (ctypes.c_void_p * len(entries))(*[key for key, _ in entries])
         values = (ctypes.c_void_p * len(entries))(*[value for _, value in entries])
-        return cf.CFDictionaryCreate(None, keys, values, len(entries), None, None)
+        return cf.CFDictionaryCreate(
+            None,
+            keys,
+            values,
+            len(entries),
+            constants["key_callbacks"],
+            constants["value_callbacks"],
+        )
 
-    class_ref = cf_string("class")
-    generic_ref = cf_string("genp")
-    service_ref = cf_string("svce")
-    target_ref = cf_string(CREDENTIAL_TARGET)
-    account_ref = cf_string("acct")
-    user_ref = cf_string(credential_account())
-    value_ref = cf_string("v_Data")
-    secret_ref = cf_data(secret.encode("utf-8"))
-    refs = [class_ref, generic_ref, service_ref, target_ref, account_ref, user_ref, value_ref, secret_ref]
-    try:
-        query = dictionary([(class_ref, generic_ref), (service_ref, target_ref), (account_ref, user_ref)])
-        try:
-            item = dictionary(
-                [
-                    (class_ref, generic_ref),
-                    (service_ref, target_ref),
-                    (account_ref, user_ref),
-                    (value_ref, secret_ref),
-                ]
-            )
-            try:
-                status = security.SecItemAdd(item, None)
-            finally:
-                cf.CFRelease(item)
-            if status == _ERR_SEC_DUPLICATE_ITEM:
-                security.SecItemDelete(query)
-                item = dictionary(
-                    [
-                        (class_ref, generic_ref),
-                        (service_ref, target_ref),
-                        (account_ref, user_ref),
-                        (value_ref, secret_ref),
-                    ]
-                )
-                try:
-                    status = security.SecItemAdd(item, None)
-                finally:
-                    cf.CFRelease(item)
-            if status != _ERR_SEC_SUCCESS:
+    with ExitStack() as cleanup:
+        def owned(ref, label: str):
+            if not ref:
                 raise ManagerError(
                     "credential_write_failed",
-                    f"SecItemAdd failed (status {status}).",
+                    f"CoreFoundation could not allocate {label}.",
                 )
-        finally:
-            cf.CFRelease(query)
-    finally:
-        for ref in refs:
-            cf.CFRelease(ref)
+            cleanup.callback(cf.CFRelease, ref)
+            return ref
+
+        target_ref = owned(cf_string(CREDENTIAL_TARGET), "the Keychain service string")
+        user_ref = owned(cf_string(credential_account()), "the Keychain account string")
+        secret_ref = owned(cf_data(secret.encode("utf-8")), "the credential data")
+        query = owned(
+            dictionary(
+                [
+                    (constants["class"], constants["generic_password"]),
+                    (constants["service"], target_ref),
+                    (constants["account"], user_ref),
+                ]
+            ),
+            "the Keychain query",
+        )
+        item = owned(
+            dictionary(
+                [
+                    (constants["class"], constants["generic_password"]),
+                    (constants["service"], target_ref),
+                    (constants["account"], user_ref),
+                    (constants["value_data"], secret_ref),
+                ]
+            ),
+            "the Keychain item",
+        )
+        status = security.SecItemAdd(item, None)
+        if status == _ERR_SEC_DUPLICATE_ITEM:
+            updates = owned(
+                dictionary([(constants["value_data"], secret_ref)]),
+                "the Keychain update",
+            )
+            status = security.SecItemUpdate(query, updates)
+        if status != _ERR_SEC_SUCCESS:
+            raise ManagerError(
+                "credential_write_failed",
+                f"Keychain credential write failed (status {status}).",
+            )
 
 
 def _macos_remove_credential() -> bool:
@@ -935,6 +974,7 @@ def write_manifest(paths: Paths, payload: Dict[str, Any]) -> None:
 def default_manifest(original_parent_model: str, original_parent_provider: Optional[str]) -> Dict[str, Any]:
     return {
         "schema_version": 1,
+        "hash_version": HASH_VERSION_EXACT_BYTES,
         "project": PROJECT_NAME,
         "installed_at": datetime.now().isoformat(timespec="seconds"),
         "managed": {
@@ -967,19 +1007,47 @@ def default_manifest(original_parent_model: str, original_parent_provider: Optio
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class ManagedAsset:
+    path: Path
+    verify_integrity: bool = True
+    hook_runtime: bool = False
+    shared: bool = False
+
+
+def managed_assets(paths: Paths) -> Dict[str, ManagedAsset]:
+    """Single registry for all managed paths and their lifecycle semantics."""
+    return {
+        "flash_agent": ManagedAsset(paths.flash_agent),
+        "pro_agent": ManagedAsset(paths.pro_agent),
+        "catalog": ManagedAsset(paths.catalog),
+        "runtime_skill": ManagedAsset(
+            paths.runtime_skill_dir / "SKILL.md",
+            hook_runtime=True,
+        ),
+        "hook_config": ManagedAsset(
+            paths.hooks_config,
+            verify_integrity=False,
+            shared=True,
+        ),
+        "hook_script_py": ManagedAsset(
+            paths.hooks_install_dir / "plaintext_handoff.py",
+            hook_runtime=True,
+        ),
+        "hook_script_ps1": ManagedAsset(
+            paths.hooks_install_dir / "plaintext-handoff.ps1",
+            hook_runtime=True,
+        ),
+    }
+
+
+def managed_asset_paths(paths: Paths) -> Dict[str, Path]:
+    return {key: asset.path for key, asset in managed_assets(paths).items()}
+
+
 def tracked_files(paths: Paths) -> List[Path]:
     """Every file the manager may write; all of them join the transaction snapshot."""
-    return [
-        paths.config,
-        paths.catalog,
-        paths.flash_agent,
-        paths.pro_agent,
-        paths.hooks_config,
-        paths.manifest,
-        paths.hooks_install_dir / "plaintext_handoff.py",
-        paths.hooks_install_dir / "plaintext-handoff.ps1",
-        paths.runtime_skill_dir / "SKILL.md",
-    ]
+    return [paths.config, paths.manifest, *managed_asset_paths(paths).values()]
 
 
 def make_backup(paths: Paths) -> Path:
@@ -996,7 +1064,9 @@ def restore_backup(paths: Paths, backup: Path) -> None:
     for target in tracked_files(paths):
         source = backup / target.name
         if source.is_file():
-            atomic_write(target, source.read_bytes(), mode=0o600)
+            mode = stat.S_IMODE(source.stat().st_mode)
+            atomic_write(target, source.read_bytes(), mode=mode)
+            shutil.copystat(source, target)
         elif target.is_file():
             target.unlink()
 
@@ -1061,7 +1131,16 @@ def operation_lock(paths: Paths, timeout_seconds: float = LOCK_WAIT_SECONDS):
 def _file_is_ours(path: Path, manifest: Dict[str, Any], manifest_hash_key: str) -> bool:
     """True when the file is byte-identical to the version we installed."""
     expected = (manifest.get("hashes") or {}).get(manifest_hash_key)
-    return bool(expected) and path.is_file() and sha256_text_file(path) == expected
+    if not expected or not path.is_file():
+        return False
+    hash_version = manifest.get("hash_version")
+    if hash_version == HASH_VERSION_EXACT_BYTES:
+        return sha256_file(path) == expected
+    # Manifests written before hash_version normalized line endings. Accept
+    # that legacy ownership proof once so repair can migrate it safely.
+    if hash_version is None:
+        return sha256_text_file(path) == expected
+    return False
 
 
 def _assert_writable_target(path: Path, expected: bytes, manifest: Dict[str, Any], manifest_hash_key: str) -> bool:
@@ -1070,7 +1149,7 @@ def _assert_writable_target(path: Path, expected: bytes, manifest: Dict[str, Any
         return True
     if _file_is_ours(path, manifest, manifest_hash_key):
         return True
-    if sha256_text_file(path) == sha256_bytes(expected):
+    if sha256_file(path) == sha256_bytes(expected):
         return True  # identical content: adopt
     return False
 
@@ -1184,11 +1263,52 @@ def _entry_is_ours(entry: Dict[str, Any], paths: Paths) -> bool:
     inner = (entry.get("hooks") or [{}])[0] if isinstance(entry, dict) else {}
     command = inner.get("command", "") if isinstance(inner, dict) else ""
     command_windows = inner.get("commandWindows", "") if isinstance(inner, dict) else ""
-    return (
-        "plaintext_handoff.py" in command and "--mode hook" in command
-    ) or (
-        "plaintext-handoff.ps1" in command_windows and "-Mode hook" in command_windows
-    )
+
+    def basename(value: str) -> str:
+        return re.split(r"[\\/]", value.strip('"'))[-1].lower()
+
+    recognized = False
+    if command:
+        if re.search(r"[;&|`$><\r\n]", command):
+            return False
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return False
+        if not (
+            len(tokens) == 6
+            and basename(tokens[1]) == "plaintext_handoff.py"
+            and tokens[2:5] == ["--mode", "hook", "--state-directory"]
+            and tokens[0]
+            and tokens[5]
+        ):
+            return False
+        recognized = True
+    if command_windows:
+        if re.search(r"[;&|`$><\r\n]", command_windows):
+            return False
+        try:
+            tokens = [token.strip('"') for token in shlex.split(command_windows, posix=False)]
+        except ValueError:
+            return False
+        lowered = [token.lower() for token in tokens]
+        if not (
+            len(tokens) == 11
+            and basename(tokens[0]) == "powershell.exe"
+            and lowered[1:6] == [
+                "-noprofile",
+                "-noninteractive",
+                "-executionpolicy",
+                "bypass",
+                "-file",
+            ]
+            and basename(tokens[6]) == "plaintext-handoff.ps1"
+            and lowered[7:10] == ["-mode", "hook", "-statedirectory"]
+            and tokens[10]
+        ):
+            return False
+        recognized = True
+    return recognized
 
 
 def merge_hook_config(existing: Dict[str, Any], ours: Dict[str, Any], paths: Paths) -> Tuple[Dict[str, Any], bool]:
@@ -1269,14 +1389,14 @@ def install_hook_config(paths: Paths, manifest: Dict[str, Any]) -> Tuple[bool, b
             raise ManagerError("conflict", f"Existing hooks.json is not valid JSON: {exc}") from exc
         if not isinstance(existing, dict):
             raise ManagerError("conflict", "Existing hooks.json is not a JSON object.", {})
-        if not _file_is_ours(paths.hooks_config, manifest, "hook_config"):
-            # Foreign file: merge carefully, never replace.
-            merged, adopted = merge_hook_config(existing, ours, paths)
-            data = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode()
-            changed = sha256_text_file(paths.hooks_config) != sha256_bytes(data)
-            if changed:
-                atomic_write(paths.hooks_config, data)
-            return changed, adopted
+        # hooks.json is always shared, even when its last observed bytes match
+        # our manifest. Preserve unrelated entries on every setup/repair.
+        merged, adopted = merge_hook_config(existing, ours, paths)
+        data = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode()
+        changed = sha256_file(paths.hooks_config) != sha256_bytes(data)
+        if changed:
+            atomic_write(paths.hooks_config, data)
+        return changed, adopted
     data = (json.dumps(ours, ensure_ascii=False, indent=2) + "\n").encode()
     changed = not paths.hooks_config.is_file() or paths.hooks_config.read_text() != data.decode()
     if changed:
@@ -1311,19 +1431,28 @@ def hook_entry_present(paths: Paths) -> bool:
     if not isinstance(entries, list):
         return False
     ours = our_hook_config(paths)["hooks"]["SubagentStart"][0]
-    return any(
-        isinstance(entry, dict)
-        and entry.get("matcher") == ours["matcher"]
-        and (_matcher_equal(entry, ours) or _entry_is_ours(entry, paths))
+    router_entries = [
+        entry
         for entry in entries
+        if isinstance(entry, dict) and entry.get("matcher") == ours["matcher"]
+    ]
+    return len(router_entries) == 1 and _matcher_equal(router_entries[0], ours)
+
+
+def runtime_assets_valid(paths: Paths, manifest: Dict[str, Any]) -> bool:
+    """All executable/runtime assets must match the installed manifest exactly."""
+    return all(
+        _file_is_ours(asset.path, manifest, key)
+        for key, asset in managed_assets(paths).items()
+        if asset.verify_integrity
     )
 
 
-def hook_files_installed(paths: Paths) -> bool:
-    return (
-        (paths.hooks_install_dir / "plaintext_handoff.py").is_file()
-        and (paths.hooks_install_dir / "plaintext-handoff.ps1").is_file()
-        and (paths.runtime_skill_dir / "SKILL.md").is_file()
+def hook_files_installed(paths: Paths, manifest: Dict[str, Any]) -> bool:
+    return all(
+        _file_is_ours(asset.path, manifest, key)
+        for key, asset in managed_assets(paths).items()
+        if asset.hook_runtime
     )
 
 
@@ -1341,13 +1470,8 @@ def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[s
 
 def compute_asset_hashes(paths: Paths) -> Dict[str, str]:
     return {
-        "flash_agent": sha256_text_file(paths.flash_agent),
-        "pro_agent": sha256_text_file(paths.pro_agent),
-        "catalog": sha256_bytes(paths.catalog.read_bytes()),
-        "runtime_skill": sha256_text_file(paths.runtime_skill_dir / "SKILL.md"),
-        "hook_config": sha256_text_file(paths.hooks_config),
-        "hook_script_py": sha256_text_file(paths.hooks_install_dir / "plaintext_handoff.py"),
-        "hook_script_ps1": sha256_text_file(paths.hooks_install_dir / "plaintext-handoff.ps1"),
+        key: sha256_file(path)
+        for key, path in managed_asset_paths(paths).items()
     }
 
 
@@ -1407,8 +1531,9 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
         "catalog": catalog_status(paths),
     }
     entry_present = hook_entry_present(paths)
-    scripts_present = hook_files_installed(paths)
+    scripts_present = hook_files_installed(paths, manifest)
     hooks_installed = entry_present and scripts_present
+    assets_valid = runtime_assets_valid(paths, manifest)
     trusted = hook_trusted(paths)
     errors: List[str] = []
 
@@ -1431,24 +1556,14 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
     )
     # Live-test evidence stays valid only while the managed files it tested
     # are still byte-identical to the installed versions.
-    hashes = manifest.get("hashes") or {}
-    evidence_fresh = test_evidence and all(
-        _file_is_ours(target, manifest, key)
-        for key, target in (
-            ("flash_agent", paths.flash_agent),
-            ("pro_agent", paths.pro_agent),
-            ("catalog", paths.catalog),
-            ("runtime_skill", paths.runtime_skill_dir / "SKILL.md"),
-            ("hook_script_py", paths.hooks_install_dir / "plaintext_handoff.py"),
-            ("hook_script_ps1", paths.hooks_install_dir / "plaintext-handoff.ps1"),
-        )
-    ) and hook_entry_present(paths)
+    evidence_fresh = test_evidence and assets_valid and hook_entry_present(paths)
 
     if installed:
         static_ok = (
             checks["flash_agent"]["valid"]
             and checks["pro_agent"]["valid"]
             and checks["catalog"]["registered"]
+            and assets_valid
             and hooks_installed
             and credential_present()
             and parent_unchanged
@@ -1631,6 +1746,10 @@ def repair(paths: Paths, codex_bin: str) -> Dict[str, Any]:
         if hook_adopted:
             manifest["adopted_existing"]["hook"] = True
         manifest["hashes"] = compute_asset_hashes(paths)
+        manifest["hash_version"] = HASH_VERSION_EXACT_BYTES
+        # Repair may refresh executable assets or routing configuration. Prior
+        # live-smoke evidence cannot certify the repaired installation.
+        manifest["last_test"] = None
         # Parent model may have changed (user upgraded); refresh the recorded snapshot.
         snapshot = parent_config_snapshot(paths)
         manifest["original"] = {
@@ -1716,14 +1835,12 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
     manifest = read_manifest(paths)
     if not manifest:
         raise ManagerError("not_managed", "No router manifest found. Refusing to modify configuration.")
-    for key, target in (
-        ("flash_agent", paths.flash_agent),
-        ("pro_agent", paths.pro_agent),
-        ("catalog", paths.catalog),
-        ("runtime_skill", paths.runtime_skill_dir / "SKILL.md"),
-        ("hook_script_py", paths.hooks_install_dir / "plaintext_handoff.py"),
-        ("hook_script_ps1", paths.hooks_install_dir / "plaintext-handoff.ps1"),
-    ):
+    asset_specs = managed_assets(paths)
+    assets = {key: asset.path for key, asset in asset_specs.items()}
+    for key, asset in asset_specs.items():
+        if asset.shared:
+            continue  # shared file: remove only our exact entry below
+        target = asset.path
         if target.is_file() and not _file_is_ours(target, manifest, key):
             raise ManagerError(
                 "conflict",
@@ -1741,7 +1858,7 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
                 remaining = None
             if isinstance(remaining, dict) and not remaining.get("hooks"):
                 paths.hooks_config.unlink(missing_ok=True)
-        for target in (paths.flash_agent, paths.pro_agent):
+        for target in (assets["flash_agent"], assets["pro_agent"]):
             target.unlink(missing_ok=True)
         catalog_removed = False
         catalog_restored = False
@@ -1754,7 +1871,7 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
             else:
                 paths.catalog.unlink(missing_ok=True)
                 catalog_removed = True
-        runtime_skill = paths.runtime_skill_dir / "SKILL.md"
+        runtime_skill = assets["runtime_skill"]
         runtime_skill.unlink(missing_ok=True)
         shutil.rmtree(paths.runtime_skill_dir, ignore_errors=True)
         shutil.rmtree(paths.hooks_install_dir, ignore_errors=True)

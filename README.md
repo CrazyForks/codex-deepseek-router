@@ -1,5 +1,7 @@
 # codex-deepseek-router
 
+English | [简体中文](README.zh-CN.md)
+
 A thin, reliable routing layer that lets Codex keep itself as the parent
 agent while delegating to two native DeepSeek child agents — and choose
 between them, and how they reason, based on the task.
@@ -23,11 +25,47 @@ transactional, rollback-safe installs.
 
 ## Quick start
 
-Requirements: Python 3.9+, the Codex desktop app (started at least once),
-and a DeepSeek API key.
+Requirements: Node.js/npm, Python 3.9+, the Codex desktop app (started at
+least once), and a DeepSeek API key.
+
+1. Install the management skill globally for Codex:
 
 ```bash
-git clone https://github.com/<your-org>/codex-deepseek-router.git
+npx skills add TheBlindM/codex-deepseek-router --skill codex-deepseek-router -g -a codex -y
+```
+
+This uses the open [`skills` CLI](https://github.com/vercel-labs/skills) to
+install this repository's skill; this project does not publish or execute a
+separate npm package.
+
+2. Restart the Codex desktop app, open a new task, and ask:
+
+```text
+Install and configure codex-deepseek-router for me.
+```
+
+3. The skill checks the current state first. If no credential exists, Codex
+   asks for the DeepSeek API key and passes it to the manager through stdin
+   only. The manager installs both agents, the model catalog, the handoff hook,
+   and the runtime routing skill transactionally.
+
+4. Review and trust the new hook with `/hooks`, then ask Codex to run the live
+   router test. Both Flash and Pro must pass independently. Restart the app and
+   open a new task once the result is `ready`.
+
+After that, use it naturally:
+
+```text
+Use the DeepSeek agents to review this repository.
+```
+
+### Install from source
+
+For development or manual inspection, clone the repository and invoke the
+manager directly:
+
+```bash
+git clone https://github.com/TheBlindM/codex-deepseek-router.git
 cd codex-deepseek-router
 python3 codex-deepseek-router/scripts/codex_deepseek_router.py status --json
 ```
@@ -134,15 +172,27 @@ schema validation, and credential-leak scanning. CI runs on Windows, macOS
 and Linux across Python 3.9/3.11/3.12. Live DeepSeek calls are intentionally
 not part of CI; run `test --json` manually.
 
-## Attribution
+## Acknowledgements
 
-Manager, credential and transaction design adapts
-[oil-oil/codex-deepseek-subagent](https://github.com/oil-oil/codex-deepseek-subagent);
-the plaintext handoff transport adapts
-[Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent);
-reasoning-routing design is inspired by
-[yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite).
-See [NOTICE.md](NOTICE.md).
+This project stands on work shared openly by the following projects:
+
+- [oil-oil/codex-deepseek-subagent](https://github.com/oil-oil/codex-deepseek-subagent)
+  established the foundation for the manager CLI, atomic configuration
+  transactions and rollback, system credential storage, Codex desktop runtime
+  discovery, and native subagent verification. Its clear Skill-first install
+  flow also inspired this README's quick start.
+- [Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent)
+  provided the plaintext `SubagentStart` handoff transport that was adapted
+  for two roles, typed packets, TTL recovery, and cross-platform locking.
+- [yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)
+  inspired the bounded, task-aware reasoning policies used here. This project
+  re-expresses those ideas as FAST / REACT / SPEC / DEEP decision contracts
+  for the Codex parent rather than copying DSH runtime assumptions.
+
+Thank you to their authors and contributors for publishing the implementation,
+experiments, and design reasoning that made this project possible. Exact
+adaptations and license notices are documented in [NOTICE.md](NOTICE.md) and
+[docs/upstream-reference-map.md](docs/upstream-reference-map.md).
 
 ## License
 

@@ -1,5 +1,7 @@
 # codex-deepseek-router
 
+[English](README.md) | 简体中文
+
 一个很薄、很可靠的 Codex → DeepSeek 调度层：Codex 保持父 Agent 身份，
 同时拥有两个原生 DeepSeek 子 Agent，并按任务类型、模态和推理方式在二者
 之间正确选择。
@@ -22,10 +24,43 @@ Agent runtime 或自动学习路由器。V1 只是一组受管文件（两个 Ag
 
 ## 快速开始
 
-要求：Python 3.9+、Codex 桌面应用（至少启动过一次）、DeepSeek API Key。
+要求：Node.js/npm、Python 3.9+、Codex 桌面应用（至少启动过一次）、
+DeepSeek API Key。
+
+1. 为 Codex 全局安装管理 Skill：
 
 ```bash
-git clone https://github.com/<your-org>/codex-deepseek-router.git
+npx skills add TheBlindM/codex-deepseek-router --skill codex-deepseek-router -g -a codex -y
+```
+
+这里运行的是开放的 [`skills` CLI](https://github.com/vercel-labs/skills)，
+它负责从本仓库安装 Skill；本项目本身不需要发布或执行单独的 npm 包。
+
+2. 重启 Codex 桌面应用并新建任务，然后说：
+
+```text
+请帮我安装并配置 codex-deepseek-router。
+```
+
+3. Skill 会先检查当前状态。缺少凭据时，Codex 会索要 DeepSeek API Key，
+   并且只通过标准输入交给管理器。管理器随后以事务方式安装两个 Agent、
+   模型目录、明文交接 Hook 和运行时路由 Skill。
+
+4. 在 Codex 中运行 `/hooks`，审查并信任新 Hook，然后让 Codex 执行真实路由
+   测试。Flash 与 Pro 必须分别通过。结果为 `ready` 后，重启应用并新建任务。
+
+以后可以直接自然地说：
+
+```text
+用 DeepSeek 子 Agent 评审这个仓库。
+```
+
+### 从源码安装
+
+开发或人工审查时，也可以克隆仓库并直接调用管理器：
+
+```bash
+git clone https://github.com/TheBlindM/codex-deepseek-router.git
 cd codex-deepseek-router
 python3 codex-deepseek-router/scripts/codex_deepseek_router.py status --json
 ```
@@ -124,14 +159,27 @@ python3 -m venv .venv && .venv/bin/pip install pytest
 Linux × Python 3.9/3.11/3.12。真实 DeepSeek 调用刻意不进 CI，请手动运行
 `test --json`。
 
-## 致谢与许可
+## 致谢
 
-管理器、凭据与事务设计源自
-[oil-oil/codex-deepseek-subagent](https://github.com/oil-oil/codex-deepseek-subagent)；
-明文交接传输源自
-[Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent)；
-推理策略路由灵感来自
-[yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)。
-详见 [NOTICE.md](NOTICE.md)。
+本项目建立在以下开源项目分享的实现与思考之上：
+
+- [oil-oil/codex-deepseek-subagent](https://github.com/oil-oil/codex-deepseek-subagent)
+  奠定了管理器 CLI、原子配置事务与回滚、系统凭据存储、Codex 桌面运行时
+  发现和原生子 Agent 验收的基础。它清晰的 Skill-first 安装流程也直接启发了
+  本 README 的快速开始设计。
+- [Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent)
+  提供了明文 `SubagentStart` 交接传输；本项目在此基础上扩展为双角色、类型化
+  数据包、TTL 恢复和跨平台锁。
+- [yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)
+  启发了有边界、任务感知的推理策略路由。本项目没有照搬 DSH 的运行时假设，
+  而是将相关思想重新表达为 Codex 父 Agent 使用的 FAST / REACT / SPEC / DEEP
+  决策合同。
+
+感谢这些项目的作者与贡献者公开实现、实验结果和设计推理，让本项目得以站在
+可靠的基础上继续演进。具体代码适配、来源映射与许可证说明见
+[NOTICE.md](NOTICE.md) 和
+[docs/upstream-reference-map.md](docs/upstream-reference-map.md)。
+
+## 许可
 
 MIT — 见 [LICENSE](LICENSE)。

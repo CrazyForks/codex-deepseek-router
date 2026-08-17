@@ -16,7 +16,6 @@ param(
     [ValidateSet("TEXT_ONLY", "VISION_TRANSLATABLE", "VISION_CRITICAL")]
     [string]$Modality = "TEXT_ONLY",
 
-    [ValidateRange(1, 3600)]
     [int]$TtlSeconds = 300,
 
     [string]$StateDirectory,
@@ -55,6 +54,10 @@ function Stop-Handoff([string]$Message, [int]$Code) {
 
 function Stop-TransportFailure([string]$Action, [System.Exception]$Exception) {
     Stop-Handoff "Plaintext handoff transport failure while ${Action}: $($Exception.Message)" 12
+}
+
+if ($TtlSeconds -lt 1 -or $TtlSeconds -gt 3600) {
+    Stop-Handoff "TtlSeconds must be between 1 and 3600." 8
 }
 
 function Write-Json([object]$Value) {

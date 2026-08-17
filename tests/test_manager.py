@@ -5,6 +5,7 @@ Lifecycle tests run against a fake codex home and never touch the real
 """
 
 import json
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -154,7 +155,7 @@ def test_install_agent_and_conflict(paths):
 def test_install_agent_allows_previous_managed_content(paths):
     spec = manager.AGENT_SPECS[manager.FLASH_ROLE]
     manager.install_agent(paths, spec, {})
-    manifest = {"hashes": {"flash_agent": manager.sha256_text_file(paths.flash_agent)}}
+    manifest = {"hashes": {"flash_agent": manager.sha256_file(paths.flash_agent)}}
     paths.flash_agent.write_text("tampered\n")
     with pytest.raises(manager.ManagerError) as exc:
         manager.install_agent(paths, spec, manifest)
@@ -201,6 +202,17 @@ def test_merge_hook_config_conflicts_on_foreign_matcher(paths):
     assert exc.value.code == "conflict"
 
 
+def test_merge_hook_config_conflicts_on_router_command_with_extra_behavior(paths):
+    ours = manager.our_hook_config(paths)
+    foreign = json.loads(json.dumps(ours))
+    foreign["hooks"]["SubagentStart"][0]["hooks"][0]["command"] += " --foreign-behavior"
+
+    with pytest.raises(manager.ManagerError) as exc:
+        manager.merge_hook_config(foreign, ours, paths)
+
+    assert exc.value.code == "conflict"
+
+
 def test_merge_hook_config_refreshes_own_entry(paths):
     ours = manager.our_hook_config(paths)
     stale = json.loads(json.dumps(ours))
@@ -210,6 +222,24 @@ def test_merge_hook_config_refreshes_own_entry(paths):
     merged, adopted = manager.merge_hook_config(stale, ours, paths)
     assert adopted is True
     assert merged == ours
+
+
+def test_hook_ownership_requires_exact_windows_command_shape(paths, monkeypatch):
+    monkeypatch.setattr(manager, "platform_name", lambda: "windows")
+    entry = manager.our_hook_config(paths)["hooks"]["SubagentStart"][0]
+    assert manager._entry_is_ours(entry, paths) is True
+
+    entry["hooks"][0]["commandWindows"] += " -ForeignBehavior"
+    assert manager._entry_is_ours(entry, paths) is False
+
+
+def test_hook_ownership_rejects_shell_metacharacters(paths):
+    entry = manager.our_hook_config(paths)["hooks"]["SubagentStart"][0]
+    entry["hooks"][0]["command"] = (
+        'python;foreign "/old/plaintext_handoff.py" --mode hook '
+        '--state-directory "/x"'
+    )
+    assert manager._entry_is_ours(entry, paths) is False
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +265,7 @@ def test_setup_lifecycle(paths, fake_codex, no_credentials):
     manifest = manager.read_manifest(paths)
     assert manifest["original"]["parent_model"] == "gpt-5.6-test"
     assert manifest["managed"]["flash_agent"] and manifest["managed"]["pro_agent"]
+    assert set(manifest["hashes"]) == set(manager.managed_assets(paths))
 
     status = manager.static_status(paths, fake_codex)
     assert status["status"] == "configured"
@@ -324,6 +355,20 @@ def test_setup_rollback_covers_hook_scripts_and_skill(paths, fake_codex, no_cred
     assert json.loads(paths.hooks_config.read_text()) == foreign
 
 
+def test_setup_rollback_preserves_existing_file_mode(paths, fake_codex, no_credentials):
+    ours = manager.our_hook_config(paths)
+    foreign = json.loads(json.dumps(ours))
+    foreign["hooks"]["SubagentStart"][0]["hooks"][0]["command"] = "echo foreign-hook"
+    paths.hooks_config.write_text(json.dumps(foreign))
+    paths.hooks_config.chmod(0o644)
+    original_mode = paths.hooks_config.stat().st_mode
+
+    with pytest.raises(manager.ManagerError):
+        manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+
+    assert paths.hooks_config.stat().st_mode == original_mode
+
+
 def test_setup_adopts_identical_catalog(paths, fake_codex, no_credentials):
     paths.catalog.write_bytes(
         (json.dumps(manager.catalog_payload(), ensure_ascii=False, indent=2) + "\n").encode()
@@ -360,6 +405,14 @@ def test_setup_merges_unrelated_hooks(paths, fake_codex, no_credentials):
     hooks = json.loads(paths.hooks_config.read_text())
     assert len(hooks["hooks"]["UserPromptSubmit"]) == 1
     assert len(hooks["hooks"]["SubagentStart"]) == 1
+    manager.repair(paths, fake_codex)
+    hooks = json.loads(paths.hooks_config.read_text())
+    assert len(hooks["hooks"]["UserPromptSubmit"]) == 1
+    assert len(hooks["hooks"]["SubagentStart"]) == 1
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    hooks = json.loads(paths.hooks_config.read_text())
+    assert len(hooks["hooks"]["UserPromptSubmit"]) == 1
+    assert len(hooks["hooks"]["SubagentStart"]) == 1
     # disable must keep the unrelated hook
     manager.disable(paths)
     hooks = json.loads(paths.hooks_config.read_text())
@@ -390,6 +443,74 @@ def test_status_requires_full_hook_invariant(paths, fake_codex, no_credentials):
     assert status["hook"]["files_installed"] is False
 
 
+@pytest.mark.parametrize(
+    "asset",
+    ("python_hook", "powershell_hook", "runtime_skill"),
+)
+def test_status_rejects_modified_runtime_assets(paths, fake_codex, no_credentials, asset):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    targets = {
+        "python_hook": paths.hooks_install_dir / "plaintext_handoff.py",
+        "powershell_hook": paths.hooks_install_dir / "plaintext-handoff.ps1",
+        "runtime_skill": paths.runtime_skill_dir / "SKILL.md",
+    }
+    targets[asset].write_text("foreign or broken content\n")
+
+    status = manager.static_status(paths, fake_codex)
+
+    assert status["status"] == "partial"
+    assert status["hook"]["files_installed"] is False
+
+
+def test_status_uses_byte_exact_runtime_asset_hashes(paths, fake_codex, no_credentials):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    target = paths.hooks_install_dir / "plaintext_handoff.py"
+    target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+
+    status = manager.static_status(paths, fake_codex)
+
+    assert status["status"] == "partial"
+    assert status["hook"]["files_installed"] is False
+
+
+def test_unknown_hash_version_never_uses_legacy_normalization(tmp_path):
+    target = tmp_path / "asset.txt"
+    target.write_bytes(b"a\r\nb\r\n")
+    legacy_hash = manager.sha256_text_file(target)
+    manifest = {"hashes": {"asset": legacy_hash}}
+    assert manager._file_is_ours(target, manifest, "asset") is True
+
+    manifest["hash_version"] = 999
+    assert manager._file_is_ours(target, manifest, "asset") is False
+
+
+def test_status_requires_exact_router_hook_entry(paths, fake_codex, no_credentials):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    config = json.loads(paths.hooks_config.read_text())
+    entry = config["hooks"]["SubagentStart"][0]["hooks"][0]
+    entry["command"] += " --foreign-behavior"
+    paths.hooks_config.write_text(json.dumps(config))
+
+    status = manager.static_status(paths, fake_codex)
+
+    assert status["status"] == "partial"
+    assert status["hook"]["entry_present"] is False
+
+
+def test_status_rejects_conflicting_duplicate_router_hook(paths, fake_codex, no_credentials):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    config = json.loads(paths.hooks_config.read_text())
+    foreign = json.loads(json.dumps(config["hooks"]["SubagentStart"][0]))
+    foreign["hooks"][0]["command"] += " --foreign-behavior"
+    config["hooks"]["SubagentStart"].append(foreign)
+    paths.hooks_config.write_text(json.dumps(config))
+
+    status = manager.static_status(paths, fake_codex)
+
+    assert status["status"] == "partial"
+    assert status["hook"]["entry_present"] is False
+
+
 def test_status_ready_after_live_test_and_downgrades_when_modified(
     paths, fake_codex, no_credentials, trusted, monkeypatch
 ):
@@ -410,26 +531,66 @@ def test_status_ready_after_live_test_and_downgrades_when_modified(
     assert manager.static_status(paths, fake_codex)["status"] == "partial"
 
 
-def test_macos_store_credential_never_uses_subprocess(monkeypatch):
-    """The reviewed issue: the secret must never reach a subprocess argv."""
+def test_repair_requires_fresh_live_tests(paths, fake_codex, no_credentials, trusted, monkeypatch):
+    monkeypatch.setattr(manager, "native_spawn_smoke", _fake_smoke)
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    manager.run_tests(paths, fake_codex)
+    assert manager.static_status(paths, fake_codex)["status"] == "ready"
+
+    manager.repair(paths, fake_codex)
+
+    status = manager.static_status(paths, fake_codex)
+    assert status["status"] == "configured"
+    assert status["last_test"] is None
+
+
+def test_repair_migrates_legacy_normalized_asset_hashes(paths, fake_codex, no_credentials):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    manifest = manager.read_manifest(paths)
+    manifest.pop("hash_version")
+    manifest["hashes"] = {
+        key: manager.sha256_text_file(asset.path)
+        for key, asset in manager.managed_assets(paths).items()
+    }
+    manager.write_manifest(paths, manifest)
+    powershell = paths.hooks_install_dir / "plaintext-handoff.ps1"
+    powershell.write_bytes(powershell.read_bytes().replace(b"\n", b"\r\n"))
+
+    result = manager.repair(paths, fake_codex)
+
+    assert result["status"] == "configured"
+    migrated = manager.read_manifest(paths)
+    assert migrated["hash_version"] == manager.HASH_VERSION_EXACT_BYTES
+    assert migrated["hashes"]["hook_script_ps1"] == manager.sha256_file(powershell)
+
+
+def test_macos_store_credential_uses_keychain_constants_and_updates_in_place(monkeypatch):
+    """Keychain writes are argv-free, API-valid, and preserve an existing item."""
     import ctypes
 
     calls = []
+    created = []
+
+    def allocate():
+        ref = 101 + len(created)
+        created.append(ref)
+        return ref
 
     class FakeCF:
         def CFStringCreateWithCString(self, alloc, value, encoding):
             calls.append(("string", bytes(value).decode()))
-            return len(calls) + 100
+            return allocate()
 
         def CFDataCreate(self, alloc, buffer, length):
             calls.append(("data", bytes(buffer)[:length]))
-            return len(calls) + 100
+            return allocate()
 
         def CFDictionaryCreate(self, alloc, keys, values, count, kcb, vcb):
-            return len(calls) + 100
+            calls.append(("dictionary", tuple(keys[:count]), tuple(values[:count]), kcb, vcb))
+            return allocate()
 
         def CFRelease(self, ref):
-            pass
+            calls.append(("release", ref))
 
     class FakeSecurity:
         def __init__(self):
@@ -438,13 +599,27 @@ def test_macos_store_credential_never_uses_subprocess(monkeypatch):
         def SecItemAdd(self, item, out):
             self.adds += 1
             calls.append(("SecItemAdd", self.adds))
-            return -25299 if self.adds == 1 else 0  # duplicate, then success
+            return -25299
 
-        def SecItemDelete(self, query):
-            calls.append(("SecItemDelete", None))
+        def SecItemUpdate(self, query, attributes):
+            calls.append(("SecItemUpdate", query, attributes))
             return 0
 
     monkeypatch.setattr(manager, "_macos_security_framework", lambda: (FakeSecurity(), FakeCF(), ctypes))
+    monkeypatch.setattr(
+        manager,
+        "_macos_security_constants",
+        lambda security, cf, ctypes_module: {
+            "class": 11,
+            "generic_password": 12,
+            "service": 13,
+            "account": 14,
+            "value_data": 15,
+            "key_callbacks": 16,
+            "value_callbacks": 17,
+        },
+        raising=False,
+    )
 
     def _no_subprocess(*args, **kwargs):
         raise AssertionError("credential write must not spawn subprocesses (argv leak)")
@@ -454,8 +629,102 @@ def test_macos_store_credential_never_uses_subprocess(monkeypatch):
     manager._macos_store_credential("sk-test-secret")
     assert ("data", b"sk-test-secret") in calls
     assert ("string", "sk-test-secret") not in calls
-    assert [entry for entry in calls if entry[0] == "SecItemAdd"] == [("SecItemAdd", 1), ("SecItemAdd", 2)]
-    assert ("SecItemDelete", None) in calls
+    assert [entry for entry in calls if entry[0] == "string"] == [
+        ("string", manager.CREDENTIAL_TARGET),
+        ("string", manager.credential_account()),
+    ]
+    assert [entry for entry in calls if entry[0] == "SecItemAdd"] == [("SecItemAdd", 1)]
+    assert len([entry for entry in calls if entry[0] == "SecItemUpdate"]) == 1
+    dictionaries = [entry for entry in calls if entry[0] == "dictionary"]
+    assert dictionaries
+    assert all(entry[3:] == (16, 17) for entry in dictionaries)
+    assert sorted(entry[1] for entry in calls if entry[0] == "release") == sorted(created)
+
+
+def test_macos_store_credential_releases_partial_allocations(monkeypatch):
+    import ctypes
+
+    released = []
+
+    class FailingCF:
+        def __init__(self):
+            self.strings = 0
+
+        def CFStringCreateWithCString(self, alloc, value, encoding):
+            self.strings += 1
+            return 101 if self.strings == 1 else None
+
+        def CFDataCreate(self, alloc, buffer, length):
+            raise AssertionError("allocation must stop after a null CFString")
+
+        def CFDictionaryCreate(self, alloc, keys, values, count, kcb, vcb):
+            raise AssertionError("native dictionaries must not receive null values")
+
+        def CFRelease(self, ref):
+            released.append(ref)
+
+    fake_cf = FailingCF()
+    monkeypatch.setattr(manager, "_macos_security_framework", lambda: (object(), fake_cf, ctypes))
+    monkeypatch.setattr(
+        manager,
+        "_macos_security_constants",
+        lambda security, cf, ctypes_module: {
+            "class": 11,
+            "generic_password": 12,
+            "service": 13,
+            "account": 14,
+            "value_data": 15,
+            "key_callbacks": 16,
+            "value_callbacks": 17,
+        },
+    )
+
+    with pytest.raises(manager.ManagerError) as exc:
+        manager._macos_store_credential("sk-test-secret")
+
+    assert exc.value.code == "credential_write_failed"
+    assert released == [101]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS Security.framework")
+def test_macos_keychain_dictionary_is_accepted_by_native_api():
+    security, cf, ctypes = manager._macos_security_framework()
+    constants = manager._macos_security_constants(security, cf, ctypes)
+    security.SecItemCopyMatching.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    security.SecItemCopyMatching.restype = ctypes.c_int32
+
+    def cf_string(value):
+        return cf.CFStringCreateWithCString(
+            None,
+            value.encode(),
+            manager._K_CF_STRING_ENCODING_UTF8,
+        )
+
+    target = cf_string(f"codex-router-readonly-test-{uuid.uuid4().hex}")
+    account = cf_string("nobody")
+    entries = [
+        (constants["class"], constants["generic_password"]),
+        (constants["service"], target),
+        (constants["account"], account),
+    ]
+    keys = (ctypes.c_void_p * len(entries))(*[key for key, _ in entries])
+    values = (ctypes.c_void_p * len(entries))(*[value for _, value in entries])
+    query = cf.CFDictionaryCreate(
+        None,
+        keys,
+        values,
+        len(entries),
+        constants["key_callbacks"],
+        constants["value_callbacks"],
+    )
+    try:
+        result = ctypes.c_void_p()
+        status = security.SecItemCopyMatching(query, ctypes.byref(result))
+        assert status == -25300  # errSecItemNotFound proves the query was valid.
+    finally:
+        cf.CFRelease(query)
+        cf.CFRelease(target)
+        cf.CFRelease(account)
 
 
 def test_uninstall_restores_preexisting_catalog(paths, fake_codex, no_credentials):
