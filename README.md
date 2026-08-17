@@ -8,8 +8,8 @@
   <a href="https://github.com/TheBlindM/codex-deepseek-router/actions/workflows/ci.yml"><img src="https://github.com/TheBlindM/codex-deepseek-router/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
 </p>
 
-> Codex 始终是父 Agent。它按任务选择 `deepseek_flash` 或 `deepseek_pro`，通过
-> 原生 `spawn_agent` 派发，最后由 Codex 验证并整合结果。
+> 将 DeepSeek 真正地接入 Codex 中。Codex 做总指挥，自动选择 Flash / Pro，
+> 把便宜的大量阅读交给 Flash，把难问题交给 Pro，并且最终由 Codex 验收。
 
 ## 先看结果
 
