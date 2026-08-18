@@ -215,6 +215,7 @@ python3 -m venv .venv
 
 ## 致谢
 
+- [LINUX DO](https://linux.do/)
 - [oil-oil/codex-deepseek-subagent](https://github.com/oil-oil/codex-deepseek-subagent)
   奠定了管理器、事务回滚、系统凭据、运行时发现和原生验收的基础。
 - [Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent)
