@@ -24,7 +24,12 @@ def main(argv=None) -> int:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict) or not isinstance(payload.get("task"), str):
             raise ValueError("input must be an object with a string task")
-        result = route(payload["task"], payload.get("context") or {}, args.mode)
+        policy = payload.get("policy")
+        if policy is not None and not isinstance(policy, str):
+            raise ValueError("policy must be FAST, REACT, SPEC, or DEEP when provided")
+        result = route(
+            payload["task"], payload.get("context") or {}, args.mode, policy=policy
+        )
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except RouterError as exc:

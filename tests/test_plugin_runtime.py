@@ -9,10 +9,10 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(1, str(ROOT))
 
-from runtime.client import DeepSeekClient
+from runtime.client import DeepSeekClient, _structured, build_fallback_prompt
 from runtime.context import TaskContext, sanitize_context
 from runtime.protocol import ErrorCode, RouterError
-from runtime.router import choose
+from runtime.router import RouteMode, Router, choose, resolve_policy
 import codex_deepseek_router as manager
 
 
@@ -65,6 +65,75 @@ def test_router_uses_explicit_mode_and_complexity_metadata():
     assert choose("auto", "architecture", {"file_count": 20, "context_size": 500000, "reasoning_depth": 9}).mode.value == "pro"
 
 
+def test_fallback_policy_defaults_are_deterministic():
+    assert resolve_policy(RouteMode.FLASH, None) == "FAST"
+    assert resolve_policy(RouteMode.PRO, None) == "REACT"
+
+
+def test_fallback_rejects_flash_deep():
+    with pytest.raises(RouterError) as error:
+        resolve_policy(RouteMode.FLASH, "DEEP")
+    assert error.value.code is ErrorCode.CONFIGURATION
+    assert "requires deepseek_pro" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("mode", "policy", "marker"),
+    [
+        ("flash", "FAST", "minimum direct evidence"),
+        ("flash", "REACT", "precise read-only proposal"),
+        ("pro", "REACT", "smallest coherent change"),
+        ("pro", "DEEP", "material failure modes"),
+    ],
+)
+def test_fallback_prompt_uses_reasoning_adapter(mode, policy, marker):
+    prompt = build_fallback_prompt(mode, policy, "TASK\ninspect")
+    assert f"POLICY\n{policy}" in prompt
+    assert "POLICY EXECUTION CONTRACT" in prompt
+    assert "CONVERGENCE / STOP CONDITION" in prompt
+    assert "explicit text-only fallback" in prompt
+    assert marker in prompt
+    assert prompt.index("TASK CONTEXT") < prompt.index("POLICY EXECUTION CONTRACT")
+    assert prompt.index("CONVERGENCE / STOP CONDITION") < prompt.index("OUTPUT FORMAT")
+
+
+def test_fallback_ablation_omits_only_flash_tuning():
+    contract_only = build_fallback_prompt(
+        "flash", "FAST", "TASK\ninspect", guidance_variant="contract_only"
+    )
+    full = build_fallback_prompt(
+        "flash", "FAST", "TASK\ninspect", guidance_variant="contract_tuning"
+    )
+    assert "MODEL-SPECIFIC TUNING" not in contract_only
+    assert "MODEL-SPECIFIC TUNING" in full
+    assert "environment ceremony" in full
+
+
+def test_fallback_pro_has_no_generic_model_tuning():
+    contract_only = build_fallback_prompt(
+        "pro", "SPEC", "TASK\ninspect", guidance_variant="contract_only"
+    )
+    full = build_fallback_prompt(
+        "pro", "SPEC", "TASK\ninspect", guidance_variant="contract_tuning"
+    )
+    assert contract_only == full
+    assert "MODEL-SPECIFIC TUNING" not in full
+    assert "environment ceremony" not in full
+
+
+def test_router_passes_policy_to_selected_client():
+    calls = {}
+
+    class Client:
+        def complete(self, task, **kwargs):
+            calls.update(kwargs)
+            return {"status": "ok"}
+
+    result = Router(lambda mode: Client()).route("inspect", {}, "flash", policy="SPEC")
+    assert result["status"] == "ok"
+    assert calls["policy"] == "SPEC"
+
+
 def test_context_sanitizer_withholds_attachments():
     assert "withheld" in sanitize_context({"image": "/tmp/secret.png"})
     assert "withheld" in sanitize_context({"metadata": {"image": "base64-data"}})
@@ -97,6 +166,32 @@ def test_client_returns_structured_result(monkeypatch):
     assert result["model"] == "deepseek-v4-flash"
     assert result["confidence"] == 0.9
     assert result["usage"]["input_tokens"] == 3
+
+
+def test_structured_extracts_json_after_provider_preamble():
+    value = _structured('I should return JSON only.\n{"summary":"ok","findings":[]}')
+    assert value == {"summary": "ok", "findings": []}
+
+
+def test_client_normalizes_object_fields_without_exposing_preamble(monkeypatch):
+    class PreambleResponse(FakeResponse):
+        def read(self):
+            return json.dumps({
+                "output_text": (
+                    'I should answer now.\n'
+                    '{"summary":"ok","findings":{"timeout":12},'
+                    '"evidence":{"observed":{"source":"cli"}}}'
+                )
+            }).encode()
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    result = DeepSeekClient("flash", opener=lambda request, timeout: PreambleResponse()).complete(
+        "inspect"
+    )
+    assert result["summary"] == "ok"
+    assert result["findings"] == [{"timeout": 12}]
+    assert result["evidence"]["observed"] == [{"source": "cli"}]
+    assert "I should" not in json.dumps(result)
 
 
 def test_client_maps_missing_key(monkeypatch):
