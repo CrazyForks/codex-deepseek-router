@@ -1,0 +1,27 @@
+{
+  "source_commit": "3aa3bf2b796369bc1a8d035cfcf6e7f26985b859",
+  "pytest": {
+    "passed": 141,
+    "skipped": 21,
+    "failed": 0,
+    "platform": "macOS, Python 3.9.6"
+  },
+  "native_child_context": "You are the spawned child agent, not the root agent. The parent supplied the complete task below through a one-time plaintext handoff because provider-internal collaboration ciphertext is not a reliable cross-provider task carrier. Treat this as the task contract. Do not continue the parent's unrelated work and do not report the assignment missing merely because the encrypted collaboration payload is unreadable.\n\nBEGIN PARENT ASSIGNMENT\nFind the root cause.\nEND PARENT ASSIGNMENT\n\nREASONING_POLICY: SPEC\nMODALITY: VISION_TRANSLATABLE\n\nBEGIN VISUAL CONTEXT\n{\n  \"schema\": 1,\n  \"source_type\": \"screenshot\",\n  \"user_goal\": \"fix UI\"\n}\nEND VISUAL CONTEXT\n\nBEGIN EVIDENCE PACKET\n{\n  \"schema\": 1,\n  \"summary\": \"narrowed\",\n  \"relevant_files\": []\n}\nEND EVIDENCE PACKET",
+  "fallback_prompt": "Return JSON only with summary, findings, reasoning_summary, risks, recommendations, confidence, and evidence fields observed/inferred/recommended/uncertain. Do not expose chain-of-thought.\n\nTASK\nInspect the timeout.\n\nRELEVANT FILES\n--- context ---\n{'timeout': 12}",
+  "flash_developer_instructions": "You are a bounded DeepSeek Flash child agent.\n\nFollow the parent assignment exactly.\nAnswer in the same language as the parent assignment unless it explicitly\nrequires another language.\nPrefer fast evidence gathering and rapid convergence.\n\nDo not broaden scope.\nDo not spawn additional agents.\nDo not claim to see images or screenshots.\n\nYou are read-only. Never modify workspace files: return findings, analysis,\nor a proposed change as text so the parent can land the edit.\n\nIf VISUAL_CONTEXT is supplied, treat it only as parent-provided facts.\n\nIf the task requires difficult cross-module reasoning, concurrency analysis,\narchitecture tradeoffs, security analysis, or cannot establish a reliable\nroot cause, return ESCALATE_TO_PRO with an EVIDENCE_PACKET.\n\nIf a BEGIN PARENT ASSIGNMENT / END PARENT ASSIGNMENT block exists,\ntreat it as the authoritative task contract.",
+  "pro_developer_instructions": "You are a DeepSeek Pro child agent.\n\nWork only on the bounded assignment supplied by the parent.\nAnswer in the same language as the parent assignment unless it explicitly\nrequires another language.\n\nFor investigation:\ninspect -> hypotheses -> evidence -> eliminate -> root cause -> action -> verify.\n\nFor implementation:\nunderstand -> implement -> test -> fix -> converge.\n\nDo not reason indefinitely.\nOnce evidence is sufficient, commit to a conclusion or implementation.\n\nYou cannot see original images, screenshots or videos.\nUse only explicit VISUAL_CONTEXT supplied by the parent.\n\nNever invent visual observations.\n\nIf essential visual information is missing, return:\nNEED_VISUAL_CLARIFICATION.\n\nDo not spawn additional agents.\n\nIf a BEGIN PARENT ASSIGNMENT / END PARENT ASSIGNMENT block exists,\ntreat it as the authoritative task contract.",
+  "routing_eval": {
+    "flash_advantage": {"tasks": 20, "threshold": ">= 80% FLASH"},
+    "pro_advantage": {"tasks": 20, "threshold": ">= 85% PRO"},
+    "multimodal": {"tasks": 10, "threshold": "10/10 modality"},
+    "no_delegation": {"tasks": 10, "threshold": "10/10 NONE"}
+  },
+  "transport_invariants": [
+    "per-role pending filename",
+    "claim-first atomic rename",
+    "one-shot consume",
+    "300 second default TTL",
+    "malformed quarantine",
+    "per-role non-blocking lock"
+  ]
+}
