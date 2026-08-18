@@ -2,6 +2,10 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-router：Codex 保持父 Agent，按任务把工作路由到 DeepSeek Flash 或 Pro，并验证原生回调">
 </p>
 
+<p align="center">
+  <img src="./assets/icon.png" width="180" alt="codex-deepseek-router 图标">
+</p>
+
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
 <p align="center">

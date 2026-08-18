@@ -24,6 +24,8 @@
       "Use DeepSeek Flash to explore this repository.",
       "Use DeepSeek Pro to review this architecture."
     ],
-    "brandColor": "#4D6BFE"
+    "brandColor": "#4D6BFE",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
   }
 }

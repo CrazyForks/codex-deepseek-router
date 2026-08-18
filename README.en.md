@@ -2,6 +2,10 @@
   <img src="./assets/readme/hero-en.svg" width="100%" alt="codex-deepseek-router keeps Codex as the parent, routes work to DeepSeek Flash or Pro, and verifies the native callback">
 </p>
 
+<p align="center">
+  <img src="./assets/icon.png" width="180" alt="codex-deepseek-router icon">
+</p>
+
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
 <p align="center">
