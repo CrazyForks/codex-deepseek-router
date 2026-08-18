@@ -128,6 +128,22 @@ Flash 可以返回带 Evidence Packet 的 `ESCALATE_TO_PRO`；Pro 从已有证�
 不重新扫描整个仓库。FAST / REACT / SPEC / DEEP 为有边界的决策合同，不是
 额外的模型或运行时。
 
+路由器会在子 Agent 第一轮注入按策略区分的执行合同与停止条件，并只给 Flash
+增加短小的“直接使用已有证据、遵守输出与诚实约束、缺事实才继续探索” tuning；
+Pro 默认不叠加通用 Anchor。
+Native Hook 和显式 no-Hook fallback 共用同一 Reasoning Adapter。`Flash + DEEP`
+在生成 pending 文件前即被拒绝，并在读取 envelope 时再次校验。fallback 只有
+Prompt 一致性，不假装拥有 Native 子 Agent 的工具环境；其 Flash SPEC 结果会
+保守地整理成完整 Evidence Packet 并交给 Pro，Native 路径仍按复杂度条件升级。
+
+16 个 Golden Execution Tasks 使用 A（Current）、B（Contract Only）、C
+（Contract + Model Tuning）做消融评测；Flash / Pro 分开评分，只有在正确性不
+退化且公开 token、延迟、重复读取、环境检查、无界搜索或父 Agent 返工等指标
+出现稳定收益时才保留。项目借鉴 DSH 已验证的模型差异化行为调节、任务执行合同
+与收敛思想，但继续保持 Codex 原生编排；对于 Codex 当前没有等价接口的
+system/tool-surface 重写，不做伪实现，也不引入 DSH runtime、weak/mixed 二级
+Router 或同角色 fan-out 状态机。
+
 ## 安装内容与安全边界
 
 管理器会：
@@ -198,7 +214,7 @@ python3 scripts/codex_deepseek_router.py test --json
 - [兼容性](references/compatibility.md) ·
   [安全设计](references/security.md) ·
   [故障排查](docs/troubleshooting.md)
-- [设计决策](docs/architecture.md) · [评测](docs/eval.md) ·
+- [架构决策](docs/architecture.md) · [DSH 对齐决策](docs/design-decisions.md) · [评测](docs/eval.md) ·
   [上游来源映射](docs/upstream-reference-map.md)
 
 ## 开发与验证
@@ -207,6 +223,7 @@ python3 scripts/codex_deepseek_router.py test --json
 python3 -m venv .venv
 .venv/bin/pip install pytest
 .venv/bin/python -m pytest -q
+python3 scripts/run_execution_eval.py --variant all --smoke
 ```
 
 测试覆盖管理器生命周期与回滚、交接协议、跨角色隔离、路由合同、schema
@@ -221,7 +238,9 @@ python3 -m venv .venv
 - [Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent)
   提供了明文 `SubagentStart` 交接传输的基础实现。
 - [yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)
-  启发了有边界、任务感知的推理策略路由。
+  与 [dsh-router-standard](https://github.com/yjh051108/dsh-router-standard)
+  启发了按模型区分的首轮行为锚定、收敛约束和分模型评测方法；本项目不采用其
+  runtime、injector 或已撤回的底层理论归因。
 
 感谢这些项目的作者与贡献者公开实现、实验和设计推理。精确的代码适配、来源
 映射与许可证说明见 [NOTICE.md](NOTICE.md) 和

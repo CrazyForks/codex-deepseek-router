@@ -137,6 +137,25 @@ Flash can return `ESCALATE_TO_PRO` with an Evidence Packet so Pro continues
 from collected evidence instead of scanning the repository again. FAST / REACT
 / SPEC / DEEP are bounded decision contracts, not extra models or runtimes.
 
+On the child's first turn, a shared Reasoning Adapter composes a policy
+execution contract and stop condition, plus a short reminder for Flash to use
+supplied evidence, obey output and honesty constraints, and explore only when
+a fact is missing. Pro has no generic model anchor by default. Native Hook delivery and explicit no-Hook
+fallback use the same adapter. Flash+DEEP is rejected before a pending file is
+created and checked again when an envelope is read. Fallback has prompt parity,
+not native child tool capability parity; its Flash SPEC result is conservatively
+normalized into a complete Evidence Packet for Pro, while Native delivery keeps
+conditional escalation.
+
+Sixteen Golden Execution Tasks use A (Current), B (Contract Only), and C
+(Contract + Model Tuning) ablations. Flash and Pro are scored separately, and
+guidance is retained only when correctness does not regress and public token,
+latency, duplicate-read, environment-check, unbounded-search, or parent-rework
+metrics show a stable benefit. The router incorporates selected DSH-derived
+behavioral findings while preserving Codex-native orchestration. DSH runtime
+system/tool-surface rewriting is not emulated where Codex exposes no equivalent
+control; no weak/mixed secondary router or same-role fan-out is introduced.
+
 ## Installed components and safety boundaries
 
 The manager:
@@ -211,7 +230,7 @@ Pro passing.
 - [Compatibility](references/compatibility.md) ·
   [security](references/security.md) ·
   [troubleshooting](docs/troubleshooting.md)
-- [Design decisions](docs/architecture.md) · [evaluation](docs/eval.md) ·
+- [Architecture decisions](docs/architecture.md) · [DSH alignment decisions](docs/design-decisions.md) · [evaluation](docs/eval.md) ·
   [upstream source map](docs/upstream-reference-map.md)
 
 ## Development and verification
@@ -220,6 +239,7 @@ Pro passing.
 python3 -m venv .venv
 .venv/bin/pip install pytest
 .venv/bin/python -m pytest -q
+python3 scripts/run_execution_eval.py --variant all --smoke
 ```
 
 Tests cover manager lifecycle and rollback, the handoff protocol, cross-role
@@ -235,7 +255,10 @@ DeepSeek calls intentionally stay out of CI.
 - [Utopia-V/codex-deepseek-subagent](https://github.com/Utopia-V/codex-deepseek-subagent)
   provided the foundation for the plaintext `SubagentStart` handoff transport.
 - [yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)
-  inspired the bounded, task-aware reasoning-policy router.
+  and [dsh-router-standard](https://github.com/yjh051108/dsh-router-standard)
+  inspired model-specific first-turn anchoring, convergence guidance, and
+  per-model evaluation. This project does not adopt their runtime/injector or
+  retracted internal-model theories.
 
 Thank you to their authors and contributors for publishing implementation,
 experiments, and design reasoning. Exact adaptations, source mapping, and

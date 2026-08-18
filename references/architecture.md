@@ -32,6 +32,10 @@
                  │  Policy Router  │  FAST / REACT / SPEC / DEEP
                  └────────┬────────┘
                           │
+                 ┌────────▼────────┐
+                 │Reasoning Adapter│  policy + Flash tuning + stop condition
+                 └────────┬────────┘
+                          │
                   plaintext assignment
                           │
                  ┌────────▼────────┐
@@ -71,8 +75,15 @@
   and how to delegate: modality → sensitivity → model → policy → dispatch →
   verify → escalate. Flash is read-only (proposals as text, parent lands
   edits); Pro is workspace-write and owns implementation.
+- **Reasoning Adapter** (`runtime/reasoning.py`): validates the explicit
+  agent/policy pair and composes four execution contracts, policy-specific stop
+  conditions, and short Flash-only evidence/output-constraint tuning. Pro has no
+  generic tuning by default. The Adapter never selects a route, rewrites the
+  Codex system/tool surface, or touches transport state.
 - **Runtime** (`runtime/`): independent router, context sanitizer, model client,
-  structured protocol and usage metadata for Hook-disabled explicit calls.
+  shared reasoning adapter, structured protocol and usage metadata for
+  Hook-disabled explicit text-only calls. Prompt parity does not provide native
+  tool or workspace capability parity.
 - **State** (`~/.codex/deepseek-router/`): manifest.json, timestamped
   backups, per-role handoff files. All writes are temp-file + fsync +
   atomic replace inside a process lock; failures roll back the transaction.

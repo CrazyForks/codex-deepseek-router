@@ -83,6 +83,11 @@ Every DeepSeek agent reasons until there is enough evidence to act, then
 commits. If it cannot continue, it returns `BLOCKED` with what is missing,
 why, and the minimal next step.
 
+The runtime validates the route contract before staging and again when an
+envelope is read. `deepseek_flash + DEEP` is an error: do not silently change
+the policy or role; stage `deepseek_pro + DEEP` explicitly if that is the
+parent's semantic decision.
+
 ## Step 4 — Dispatch
 
 1. Decide whether delegation is useful.
@@ -111,12 +116,20 @@ When Plugin Hooks are unavailable or untrusted, make an explicit text-only
 request through the standalone runtime:
 
 ```text
-printf '%s' '{"task":"...","context":{}}' | python3 <plugin-root>/runtime/cli.py --mode auto
+printf '%s' '{"task":"...","context":{},"policy":"FAST"}' | python3 <plugin-root>/runtime/cli.py --mode auto
 ```
 
 Use `--mode flash` or `--mode pro` for an explicit user choice. Structured
 provider failures are advisory; Codex continues the parent task and remains
-the final decision maker.
+the final decision maker. If `policy` is omitted, fallback deterministically
+uses `FAST` for Flash and `REACT` for Pro; it does not run a second semantic
+policy classifier. The fallback shares the same Policy Execution Contract,
+Flash-only model tuning (when applicable), and Stop Condition as native
+first-turn handoff, but it remains text-only and does not have the native Codex
+subagent tool environment. Its Flash SPEC result therefore always becomes a
+complete Evidence Packet for Pro continuation; missing wrapper fields are
+normalized only from the provider's returned structured content. Pro receives
+no generic model tuning by default.
 
 Require a successful stage result naming the exact role before spawning.
 Treat a lock contender, an active pending or claimed item, quarantined
@@ -129,8 +142,13 @@ claimed assignment can be replayed or delivered to a replacement child.
 If Flash returns `ESCALATE_TO_PRO`:
 
 1. preserve its Evidence Packet;
-2. do not ask Pro to rediscover the whole repository;
-3. dispatch the evidence plus only necessary context to Pro.
+2. require `summary`, `relevant_files`, `observations`, `hypotheses`,
+   `eliminated`, `open_questions`, and `recommended_next_step`;
+3. treat `observations` as reproducible facts, not conclusions;
+4. do not ask Pro to rediscover the whole repository;
+5. dispatch the evidence plus only necessary context to Pro. Pro expands
+   reading only when the packet is incomplete, conflicting, stale, or cannot
+   support the next decision.
 
 If DeepSeek returns `NEED_VISUAL_CLARIFICATION`, inspect the visual input
 yourself and re-dispatch with the missing facts; do not let the child guess.

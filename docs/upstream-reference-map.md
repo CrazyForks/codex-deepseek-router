@@ -97,9 +97,9 @@ target file in this project → adaptation required.
 - Flash → Pro escalation protocol
 - Public Plugin Hook metadata trust check (never forged; Codex records trust itself)
 - `doctor` command and handoff-state diagnostics
-- Lightweight Reasoning Adapter (`runtime/reasoning.py`): two model anchors,
-  four execution contracts, convergence contract and route-matrix validation
-- Baseline-vs-Adapter execution dataset and Evidence Packet comparison harness
+- Lightweight Reasoning Adapter (`runtime/reasoning.py`): four policy
+  contracts, policy stop conditions, Flash-only tuning and route-matrix validation
+- Current/Contract/Tuning ablation dataset and Evidence Packet comparison harness
 
 ## DSH-derived engineering inspiration
 

@@ -18,10 +18,19 @@ code from:
 Reasoning-routing design is additionally inspired by:
 
 - [yjh051108/dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)
-  — the idea of routing between bounded reasoning policies
-  (FAST / REACT / SPEC / DEEP), re-implemented here as decision contracts for
-  the Codex parent rather than by copying its assumptions about internal
-  provider mechanisms.
+  and [yjh051108/dsh-router-standard](https://github.com/yjh051108/dsh-router-standard)
+  — model-specific behavioral conditioning, first-turn anchoring, convergence
+  guidance and model-specific empirical evaluation. These ideas are
+  independently re-implemented as compact contracts; no DSH prompt block,
+  runtime, injector, tool-routing implementation or retracted internal-model
+  theory is copied or adopted as fact.
+
+The DSH reference was reviewed from the suite gitlinks on 2026-08-18:
+`dsh-routing-suite@d924ed0`, `injector@f4ef59f`, and
+`dsh-router-standard@eff787e`. The pinned source's system-section replacement,
+first-turn tool catalog, durable-tool promotion, near-field inbox injection,
+mode override, and isolated LLM mechanisms are not copied. Only independently
+worded, additive policy contracts and asymmetric Flash tuning are implemented.
 
 ## Upstream license notices
 

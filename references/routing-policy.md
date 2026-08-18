@@ -34,6 +34,19 @@ specialization, context isolation, cost, or quality.
 
 ## Reasoning policies
 
+The policy name is not the prompt. `runtime/reasoning.py` composes one of four
+Execution Contracts with a policy-specific Stop Condition and, for Flash only,
+short model tuning on the child's first request:
+
+| Agent | FAST | REACT | SPEC | DEEP |
+|---|---:|---:|---:|---:|
+| `deepseek_flash` | yes | read-only proposal | SPEC-Lite | **invalid** |
+| `deepseek_pro` | yes | implement/test | root cause | yes |
+
+The same matrix is checked before a pending file is created and whenever an
+envelope is read. Invalid combinations are never silently upgraded,
+downgraded or rewritten.
+
 - **FAST** — inspect the minimum needed → answer → stop. Search,
   extraction, simple investigation. Flash.
 - **REACT** — understand → implement → test → fix → converge. Clear
@@ -51,6 +64,27 @@ commit. Unbounded reasoning, repeated hypotheses and analysis-without-action
 are forbidden; an agent that cannot continue returns `BLOCKED` (what is
 missing, why, minimal next step).
 
+Agent TOMLs contain only role and safety invariants. Dynamic investigation,
+implementation and closure flows live in the Reasoning Adapter so a FAST
+request does not inherit an unrelated exhaustive workflow.
+
+Model tuning is intentionally asymmetric. Flash is reminded to use supplied
+evidence directly, obey output and honesty constraints, and do extra discovery
+only when a missing fact blocks the answer. Pro receives no generic tuning in
+adapter version 5: the pinned DSH source reports that additional recall/converge and
+few-shot anchors can reduce Pro performance, while this project already has an
+explicit parent-selected policy contract. A/B/C ablation may add Pro tuning in
+the future only if it earns its cost.
+
+Standalone fallback is more conservative than Native delivery for Flash SPEC:
+without a native tool environment it always returns a complete Evidence Packet
+for Pro continuation. The adapter may normalize fields already returned by the
+provider, but never fabricates edits, commands, tests, or observations.
+
+These policies are project execution contracts; they are not DSH's
+spec/react/transition/weak behavior bands. No weak, mixed, continuous mode, or
+secondary Standard/Spec router exists here.
+
 ## Escalation
 
 Flash returns `ESCALATE_TO_PRO` with an `EVIDENCE_PACKET`
@@ -62,7 +96,14 @@ passes that packet to Pro instead of making Pro rediscover the repository.
 
 ## Policy A/B evaluation
 
-Policies are hypotheses, not dogma: baseline vs. policy runs compare task
-success, tool-call count, total tokens, latency, unnecessary reads,
-convergence, root-cause accuracy and code correctness. A policy whose
-improvement is below noise gets deleted. See `docs/eval.md`.
+Policies are hypotheses, not dogma: Current vs. Contract-only vs.
+Contract+Tuning runs compare correctness first, then tool calls, total tokens,
+latency, unnecessary/environment reads, unbounded search, convergence,
+root-cause accuracy and code correctness. Flash and Pro are scored separately;
+a block whose improvement is below noise gets deleted. See `docs/eval.md`.
+
+The no-Hook fallback accepts an optional `policy`. Without one it uses the
+deterministic minimum defaults `flash → FAST` and `pro → REACT`; it does not
+claim semantic-policy parity with the Codex parent. Prompt guidance is shared,
+but fallback capability is not: it is an explicit text-only provider request
+without native subagent tools.

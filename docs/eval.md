@@ -31,14 +31,92 @@ task that edits files belongs to Pro (REACT) or to the parent.
 4. Disagreements are reviewed by a human; a routing label is changed only
    when the dataset itself is wrong, never to make numbers look good.
 
-## Policy A/B (Epic 22)
+## Execution Golden Tasks
 
-For FAST/REACT/SPEC/DEEP, run paired trials with the policy block stripped
-(baseline) vs. applied, on the same tasks, measuring: task success,
-tool-call count, total tokens, latency, unnecessary reads, convergence
-(hung/looping runs), root-cause accuracy, code correctness. A policy whose
-improvement is below noise is removed — no keeping complexity for its own
-sake.
+`eval/execution-golden-tasks.json` contains 16 concrete, self-contained tasks:
+four each for FAST, REACT, SPEC and DEEP. The set covers direct repository
+lookup, config/log extraction, Flash read-only proposals, bounded fixes,
+lifecycle/root-cause analysis, fencing, idempotency, security boundaries and
+transport architecture closure. Three Flash SPEC-Lite cases require a
+structured `ESCALATE_TO_PRO` packet.
+
+Validate the dataset and render all 48 A/B/C prompts without provider calls:
+
+```bash
+python3 scripts/run_execution_eval.py --variant all
+python3 scripts/run_execution_eval.py --variant all --smoke
+python3 scripts/run_execution_eval.py --evidence-packet
+```
+
+Add `--live` only when billable DeepSeek calls are intended. Output is JSONL
+and records only public provider usage. Hidden chain-of-thought is neither
+requested nor estimated.
+
+## Current / Contract / Tuning ablation
+
+`eval/baseline-3aa3bf2.json` freezes the pre-Adapter main commit, pytest count,
+Native child context, fallback prompt, Flash/Pro TOML instructions, routing
+dataset bars and transport invariants. The execution harness compares:
+
+- **A — `current`**: frozen static Agent instructions plus the
+  `REASONING_POLICY` label;
+- **B — `contract_only`**: dynamic policy execution contract plus stop
+  condition, without model tuning;
+- **C — `contract_tuning`**: B plus short Flash-specific tuning. Pro C is
+  intentionally identical to Pro B because extra generic Pro anchors are not
+  enabled without evidence.
+
+Run paired live trials with:
+
+```bash
+python3 scripts/run_execution_eval.py --variant all --smoke --live --output smoke.jsonl
+python3 scripts/run_execution_eval.py --variant all --repetitions 3 --live --output results.jsonl
+```
+
+The harness records `adapter_version`, repetition, correctness, public
+input/output tokens, latency, guidance characters and estimated added prompt
+tokens. It also reserves explicit fields for tool calls, reads, duplicate
+reads, environment checks, repository-wide searches, unbounded searches,
+time-to-first-edit and parent rework. Those tool-behavior fields remain null in
+standalone fallback because it has no native tool trace; they must be populated
+from Native Codex runs rather than invented as zeros.
+
+A block is retained only when correctness does not regress and at least one
+benefit is stable beyond run-to-run noise. If cost is constrained, the eight
+task `--smoke` set (two per policy) is the first gate; full 16-task repeated
+runs follow only after smoke correctness passes.
+
+Flash and Pro results are analyzed separately. The key comparison for Flash is
+B→C: does tuning reduce repeated work, environment ceremony or unbounded
+search without harming correctness? For Pro, B and C are equal in adapter v5;
+generic Pro tuning was removed rather than retained for symmetry. A useful
+FAST stop condition does not justify a DEEP contract that lowers correctness.
+
+## Evidence Packet evaluation
+
+The three `evidence_escalation` tasks compare a direct Pro SPEC run with Flash
+SPEC-Lite followed by Pro using the returned packet:
+
+```bash
+python3 scripts/run_execution_eval.py --evidence-packet --live > evidence-results.jsonl
+```
+
+Compare total tokens, latency, correctness, duplicate discovery and parent
+integration effort. If Flash consistently adds cost without reducing Pro
+rediscovery, narrow the escalation scenarios rather than preserving the flow
+for architectural symmetry.
+
+The explicit text-only fallback cannot perform native tool-based SPEC work, so
+Flash SPEC always hands its bounded analysis to Pro. If the provider omits the
+packet wrapper, the adapter maps only its returned summary, findings, and
+evidence into the versioned packet fields; it does not invent edits, tests, or
+tool observations. Native Hook delivery remains conditionally escalated by the
+Flash SPEC contract.
+
+The 2026-08-18 smoke measurements and their limitations are recorded in
+`eval/results/2026-08-18-summary.md`. The Pro service produced seven network
+failures in twelve requests, so the three-task live Evidence Packet comparison
+and all P2 experiments remain gated.
 
 ## Multimodal truth boundary (Epic 20)
 
@@ -47,8 +125,27 @@ title". Pass that Visual Context to a child and check it: uses the fact,
 does not claim to have seen the image, and returns
 `NEED_VISUAL_CLARIFICATION` for a fact that was deliberately withheld.
 
-## Tool anchoring (Epic 23, P2/experimental)
+## Tool surface (backlog, not an emulation)
 
-V1 does not implement first-turn tool-schema anchoring. If a future
-benchmark shows clear gains from exposing A/B/C tools in the first turn and
-restoring the full set afterwards, revisit then.
+Pinned DSH code makes first-turn system/tool surface a core experimental
+variable, but V1 does not emulate it. `PreToolUse` denial happens after the
+model has already seen and selected a tool and is not equivalent to hiding its
+schema. Revisit only if Codex exposes stable child-specific pre-request tool
+catalog control.
+
+## Deliberately excluded V1 experiments
+
+- No release PostToolUse near-field injection. P2 begins with a development
+  probe of model/turn/parent/Pro/resume/parallel discrimination; only a reliable
+  and beneficial probe may advance to one Flash-only reminder after the first
+  durable tool result.
+- No dynamic tool-catalog hiding: denying an already exposed tool is not the
+  same behavior.
+- No same-role multi-Flash fan-out: the current per-role pending state cannot
+  correlate multiple children safely.
+- Mechanical `SubagentStop` closure remains off unless separate A/B evidence
+  shows that one bounded continuation reduces incomplete structured outputs.
+
+P2 compares C against D (C plus one Flash one-shot reminder) and never bundles
+near-field and closure into the A/B/C test. `stop_hook_active` is mandatory if
+mechanical closure is ever tested.
