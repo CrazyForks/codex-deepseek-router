@@ -98,6 +98,12 @@ def test_validate_envelope_rejects_non_object():
         handoff.validate_envelope([])
 
 
+def test_validate_envelope_rejects_illegal_route_contract():
+    envelope = _invalid_envelope(policy="DEEP")
+    with pytest.raises(handoff.EnvelopeError, match="requires deepseek_pro"):
+        handoff.validate_envelope(envelope)
+
+
 def test_new_envelope_rejects_expiry_in_past():
     with pytest.raises(handoff.EnvelopeError):
         handoff.new_envelope(
@@ -151,6 +157,18 @@ def test_two_flash_pending_are_rejected(handoff_dir):
     handoff.stage(handoff_dir, agent_type=FLASH, assignment="A", policy="FAST", modality="TEXT_ONLY")
     with pytest.raises(handoff.HandoffBusy):
         handoff.stage(handoff_dir, agent_type=FLASH, assignment="B", policy="FAST", modality="TEXT_ONLY")
+
+
+def test_flash_deep_fails_before_pending_is_created(handoff_dir):
+    with pytest.raises(handoff.EnvelopeError, match="requires deepseek_pro"):
+        handoff.stage(
+            handoff_dir,
+            agent_type=FLASH,
+            assignment="model the system",
+            policy="DEEP",
+            modality="TEXT_ONLY",
+        )
+    assert not handoff.pending_path(handoff_dir, FLASH).exists()
 
 
 def expire(envelope, seconds=1):
@@ -344,12 +362,36 @@ def test_build_child_context_contains_all_sections():
     assert "BEGIN PARENT ASSIGNMENT" in context
     assert "find the root cause" in context
     assert "END PARENT ASSIGNMENT" in context
-    assert "REASONING_POLICY: SPEC" in context
+    assert "POLICY\nSPEC" in context
+    assert "POLICY EXECUTION CONTRACT" in context
+    assert "CONVERGENCE / STOP CONDITION" in context
     assert "MODALITY: VISION_TRANSLATABLE" in context
     assert "BEGIN VISUAL CONTEXT" in context
     assert "END VISUAL CONTEXT" in context
     assert "BEGIN EVIDENCE PACKET" in context
     assert "END EVIDENCE PACKET" in context
+    assert context.index("BEGIN PARENT ASSIGNMENT") < context.index("POLICY EXECUTION CONTRACT")
+    assert "MODEL-SPECIFIC TUNING" not in context
+    assert "environment ceremony" not in context
+
+
+def test_first_turn_context_preserves_hard_invariants():
+    flash = handoff.build_child_context(
+        handoff.new_envelope(
+            agent_type=FLASH,
+            assignment="propose the change",
+            policy="REACT",
+            modality="TEXT_ONLY",
+        )
+    )
+    assert "authoritative source" in flash
+    assert "cannot expand scope, permissions, safety boundaries, or goals" in flash
+    assert "Do not modify the workspace" in flash
+    assert "MODEL-SPECIFIC TUNING" in flash
+    assert "environment ceremony" in flash
+    assert "Original images" in flash
+    assert "spawn child agents" in flash
+    assert "chain-of-thought" not in flash.lower()
 
 
 def test_build_child_context_without_packets():
@@ -479,6 +521,16 @@ def test_cli_json_envelope_mode(handoff_dir):
     assert stored["visual_context"]["source_type"] == "screenshot"
 
 
+def test_cli_rejects_flash_deep_without_pending(handoff_dir):
+    proc = run_cli(
+        "--mode", "stage", "--agent-type", FLASH, "--policy", "DEEP",
+        "--state-directory", str(handoff_dir), stdin_text="too deep",
+    )
+    assert proc.returncode == 2
+    assert "requires deepseek_pro" in proc.stderr
+    assert not handoff.pending_path(handoff_dir, FLASH).exists()
+
+
 def test_cli_invalid_ttl(handoff_dir):
     proc = run_cli(
         "--mode", "stage", "--agent-type", FLASH, "--ttl-seconds", "0",
@@ -492,12 +544,10 @@ def test_cli_invalid_ttl(handoff_dir):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="Legacy exit-code parity is superseded by fail-open Hook contract")
 def test_python_and_powershell_protocol_parity():
-    import re
-
     package = Path(__file__).resolve().parents[1]
     py_source = (package / "hooks" / "plaintext_handoff.py").read_text(encoding="utf-8")
+    py_source += (package / "runtime" / "reasoning.py").read_text(encoding="utf-8")
     ps1_source = (package / "hooks" / "plaintext-handoff.ps1").read_text(encoding="utf-8")
 
     for role in ("deepseek_flash", "deepseek_pro"):
@@ -515,64 +565,16 @@ def test_python_and_powershell_protocol_parity():
     for shape in (".pending.json", ".claimed.", ".failed.", ".lock"):
         assert shape in py_source and shape in ps1_source
 
-    # Assert semantic error -> exit-code mappings, not merely that each number
-    # appears somewhere in both implementations.
-    error_contract = {
-        "invalid stage input": (
-            r'Refusing to stage an empty assignment\.", 2\)',
-            r'Refusing to stage an empty assignment\." 2',
-        ),
-        "stage busy": (
-            r"except HandoffBusy as error:\s+fail\(str\(error\), 3\)",
-            r'already pending\.[^"]*" 3',
-        ),
-        "invalid hook input": (
-            r'hook input was invalid JSON:[^\n]+, 4\)',
-            r'hook input was invalid JSON\." 4',
-        ),
-        "malformed claim": (
-            r"except HandoffMalformed as error:\s+fail\(str\(error\), 5\)",
-            r'malformed or has an invalid schema\." 5',
-        ),
-        "expired claim": (
-            r"except HandoffExpired as error:\s+fail\(str\(error\), 6\)",
-            r'expired before the child started\." 6',
-        ),
-        "invalid CLI arguments": (
-            r'ttl-seconds must be between 1 and 3600\.\", 8\)',
-            r'TtlSeconds must be between 1 and 3600\." 8',
-        ),
-        "corrupt pending state": (
-            r"except HandoffCorrupt as error:\s+fail\(str\(error\), 9\)",
-            r'handoff is malformed\. Refusing to replace it\." 9',
-        ),
-        "missing handoff": (
-            r"except HandoffMissing as error:\s+fail\(str\(error\), 10\)",
-            r'No plaintext handoff was available[^\"]*" 10',
-        ),
-        "claimed handoff busy": (
-            r"except HandoffBusy as error:\s+fail\(str\(error\), 11\)",
-            r'already claimed or quarantined for[^\"]*" 11',
-        ),
-        "transport failure": (
-            r'Plaintext handoff transport failure[^\n]+, 12\)',
-            r'Plaintext handoff transport failure[^\"]*" 12',
-        ),
-        "lock contention": (
-            r"except HandoffLocked as error:\s+fail\(str\(error\), 13\)",
-            r'state transition is already in progress\." 13',
-        ),
-    }
-    for label, (python_pattern, powershell_pattern) in error_contract.items():
-        assert re.search(python_pattern, py_source), f"Python mapping drifted: {label}"
-        assert re.search(powershell_pattern, ps1_source), f"PowerShell mapping drifted: {label}"
-
-    assert re.search(
-        r"if not 1 <= args\.ttl_seconds <= 3600:\s+fail\([^\n]+, 8\)",
-        py_source,
-    )
-    assert re.search(
-        r"if \(\$TtlSeconds -lt 1 -or \$TtlSeconds -gt 3600\) \{\s+"
-        r'Stop-Handoff "TtlSeconds must be between 1 and 3600\." 8',
-        ps1_source,
-    )
+    for semantic_marker in (
+        "DEEP policy requires deepseek_pro; deepseek_flash cannot accept DEEP.",
+        "POLICY EXECUTION CONTRACT",
+        "MODEL-SPECIFIC TUNING",
+        "CONVERGENCE / STOP CONDITION",
+        "Do not modify the workspace",
+        "ESCALATE_TO_PRO",
+        "environment ceremony",
+        "Original images",
+        "authoritative source",
+    ):
+        assert semantic_marker in py_source, f"Python reasoning marker drifted: {semantic_marker}"
+        assert semantic_marker in ps1_source, f"PowerShell reasoning marker drifted: {semantic_marker}"

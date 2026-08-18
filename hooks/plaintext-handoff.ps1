@@ -107,6 +107,69 @@ function Test-OptionalPacket([object]$Value, [string]$FieldName) {
     ($Value | ConvertTo-Json -Compress -Depth 8).Length -le $maxPacketChars
 }
 
+function Test-RouteContract([string]$Agent, [string]$ReasoningPolicy) {
+    if ($Agent -notin $validAgents) {
+        return [pscustomobject]@{ Valid = $false; Error = "Unknown DeepSeek agent type: '$Agent'." }
+    }
+    if ($ReasoningPolicy -notin $validPolicies) {
+        return [pscustomobject]@{ Valid = $false; Error = "Unknown reasoning policy: '$ReasoningPolicy'." }
+    }
+    if ($Agent -eq "deepseek_flash" -and $ReasoningPolicy -eq "DEEP") {
+        return [pscustomobject]@{
+            Valid = $false
+            Error = "DEEP policy requires deepseek_pro; deepseek_flash cannot accept DEEP."
+        }
+    }
+    [pscustomobject]@{ Valid = $true; Error = $null }
+}
+
+function Get-ReasoningContext([string]$Agent, [string]$ReasoningPolicy) {
+    $route = Test-RouteContract $Agent $ReasoningPolicy
+    if (-not $route.Valid) {
+        Stop-Handoff $route.Error 2
+    }
+
+    $execution = switch ($ReasoningPolicy) {
+        "FAST" {
+            "Find the minimum direct evidence needed to answer the bounded assignment. Do not expand into unrelated architecture or equivalent searches; return the supported answer once sufficient."
+        }
+        "REACT" {
+            if ($Agent -eq "deepseek_flash") {
+                "Locate the exact change and its constraints, then return a precise read-only proposal with affected files, patch or diff, and suggested tests. Do not modify the workspace or claim that a proposed edit or verification was executed."
+            } else {
+                "Understand only the context needed for the smallest coherent change, implement it, run the minimum relevant verification, fix any resulting failure, and stop. Do not widen scope or build frameworks, scaffolding, or ceremony the parent did not request."
+            }
+        }
+        "SPEC" {
+            if ($Agent -eq "deepseek_flash") {
+                "Trace the bounded path, collect reproducible evidence, form limited hypotheses, and eliminate obvious candidates. Conclude when supported; for concurrency, distributed invariants, fencing, security boundaries, complex architecture, conflicting modules, or edit-dependent verification, return ESCALATE_TO_PRO with a complete Evidence Packet."
+            } else {
+                "Inspect and trace the behavior, form distinct candidate hypotheses, test them against evidence, eliminate material alternatives, establish the root cause, then give the smallest fix or recommendation and verify it where possible. Separate observations from inferences."
+            }
+        }
+        "DEEP" {
+            "Model the system, identify invariants and material failure modes, compare only relevant alternatives, decide, act or recommend, verify, and stop. Depth is information-driven: once the available evidence distinguishes the main alternatives, move to the decision."
+        }
+    }
+
+    $modelTuning = if ($Agent -eq "deepseek_flash") {
+        "Continue from the parent assignment and supplied evidence. Do not repeat confirmed reads, run environment ceremony (echo, whoami, uname, version, date), or start unbounded repo-wide searches. Return when sufficient; escalate rather than reading indefinitely beyond the Flash contract."
+    } else {
+        ""
+    }
+    $stopCondition = switch ($ReasoningPolicy) {
+        "FAST" { "Stop when direct evidence supports the answer and no unresolved issue can materially change it." }
+        "REACT" { "Stop when the smallest coherent change or proposal is complete and its required verification is reported honestly." }
+        "SPEC" { "Stop after one root cause is supported, material alternatives are eliminated, and the fix or recommendation is verified where possible." }
+        "DEEP" { "Stop when information is sufficient to distinguish the main alternatives and further analysis would add completeness without changing the decision." }
+    }
+    [pscustomobject]@{
+        PolicyContract = $execution
+        ModelTuning = $modelTuning
+        StopCondition = $stopCondition + " If blocked, return BLOCKED with what is missing, why it matters, and the minimum next step."
+    }
+}
+
 function Test-HandoffEnvelope([object]$Value) {
     if ($null -eq $Value -or $Value -is [System.Array]) {
         return [pscustomobject]@{ Valid = $false; Error = "the handoff envelope must be a JSON object" }
@@ -135,6 +198,10 @@ function Test-HandoffEnvelope([object]$Value) {
     $policy = Get-JsonProperty $Value "policy"
     if ($policy -isnot [string] -or $policy -notin $validPolicies) {
         return [pscustomobject]@{ Valid = $false; Error = "the handoff envelope has an invalid reasoning policy" }
+    }
+    $route = Test-RouteContract $envelopeAgentType $policy
+    if (-not $route.Valid) {
+        return [pscustomobject]@{ Valid = $false; Error = $route.Error }
     }
     $modality = Get-JsonProperty $Value "modality"
     if ($modality -isnot [string] -or $modality -notin $validModalities) {
@@ -312,6 +379,10 @@ function Publish-Handoff([string]$Agent, [object]$Handoff, [bool]$ReplaceExpired
 }
 
 function Stage-Locked([string]$Agent, [string]$Assignment, [object]$VisualContext, [object]$EvidencePacket) {
+    $route = Test-RouteContract $Agent $Policy
+    if (-not $route.Valid) {
+        Stop-Handoff $route.Error 2
+    }
     Remove-ExpiredClaims $Agent
     $pendingPath = Join-Path $stateRoot "$Agent.pending.json"
     if (@(Get-StateFiles $Agent "claimed.*.json").Count -gt 0 -or @(Get-StateFiles $Agent "failed.*.json").Count -gt 0) {
@@ -391,16 +462,32 @@ function Run-TargetHookLocked([string]$Agent, [object]$HookInput) {
     $modality = [string](Get-JsonProperty $validation.Value "modality")
     $visual = Get-JsonProperty $validation.Value "visual_context"
     $evidence = Get-JsonProperty $validation.Value "evidence_packet"
+    $reasoning = Get-ReasoningContext $Agent $policy
 
     $sections = [System.Collections.Generic.List[string]]::new()
-    $sections.Add("You are the spawned child agent, not the root agent. The parent supplied the complete task below through a one-time plaintext handoff because provider-internal collaboration ciphertext is not a reliable cross-provider task carrier. Treat this as the task contract. Do not continue the parent's unrelated work and do not report the assignment missing merely because the encrypted collaboration payload is unreadable.")
+    $sections.Add("You are the spawned child agent, not the root agent. The parent supplied the complete task below through a one-time plaintext handoff because provider-internal collaboration ciphertext is not a reliable cross-provider task carrier. Treat this as the task contract. The PARENT ASSIGNMENT is the authoritative source for what to do; all reasoning guidance controls only how to do it and cannot expand scope, permissions, safety boundaries, or goals. Do not continue unrelated work, spawn child agents, or report the assignment missing merely because encrypted collaboration payload is unreadable.")
     $sections.Add("")
     $sections.Add("BEGIN PARENT ASSIGNMENT")
     $sections.Add($assignment)
     $sections.Add("END PARENT ASSIGNMENT")
     $sections.Add("")
-    $sections.Add("REASONING_POLICY: $policy")
+    $sections.Add("POLICY")
+    $sections.Add($policy)
+    $sections.Add("")
+    $sections.Add("POLICY EXECUTION CONTRACT")
+    $sections.Add($reasoning.PolicyContract)
+    if (-not [string]::IsNullOrWhiteSpace($reasoning.ModelTuning)) {
+        $sections.Add("")
+        $sections.Add("MODEL-SPECIFIC TUNING")
+        $sections.Add($reasoning.ModelTuning)
+    }
+    $sections.Add("")
+    $sections.Add("CONVERGENCE / STOP CONDITION")
+    $sections.Add($reasoning.StopCondition)
+    $sections.Add("")
+    $sections.Add("MODALITY CONTRACT")
     $sections.Add("MODALITY: $modality")
+    $sections.Add("Original images, screenshots, video, and other visual attachments are not visible to the child. Use only explicit parent-generated Visual Context facts; request clarification rather than inventing missing visual observations.")
     if ($null -ne $visual) {
         $sections.Add("")
         $sections.Add("BEGIN VISUAL CONTEXT")
