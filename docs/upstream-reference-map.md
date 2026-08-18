@@ -8,7 +8,38 @@ Source repositories:
 
 - `oil-oil/codex-deepseek-subagent` (MIT) — manager skeleton
 - `Utopia-V/codex-deepseek-subagent` (MIT) — plaintext handoff transport
-- `yjh051108/dsh-routing-suite` — reasoning-policy inspiration only
+- `yjh051108/dsh-routing-suite` / `dsh-router-standard` — empirical engineering
+  inspiration for model-specific conditioning, first-turn anchoring,
+  convergence guidance and model-specific evaluation
+
+## DSH source lock (verified 2026-08-18)
+
+Implementation decisions in this repository use the suite's actual gitlinks,
+not the component versions or capability summary shown in its README:
+
+```text
+dsh-routing-suite main @ d924ed0fde971255507cefd2fbd311c672e1925d
+├── injector @ f4ef59fb31439225abefe45d6e793235a2a9d5e0
+└── preset   @ eff787e95132d6c7104214542104a84d656b497e
+```
+
+The reviewed preset files are
+`preset/router-standard/router-core.mjs`,
+`preset/router-standard/router-bootstrap.mjs`, `agent.cordis.yml`, and
+`preset.yml` at `eff787e95132d6c7104214542104a84d656b497e`.
+
+| DSH mechanism | Pinned source behavior | This project |
+|---|---|---|
+| Standard minimal system surface | `router-bootstrap.mjs` keeps only an optional plan section plus a one-sentence persona and clears contexts | Not emulated: `SubagentStart.additionalContext` is additive and must not override Codex instructions |
+| Standard first-turn tool surface | First request exposes platform shell plus `str_replace_editor`; a durable `tool/call` promotes the full catalog | Backlog: Codex Hooks do not expose equivalent child-specific pre-request tool-catalog replacement |
+| Spec surface | Keeps assembled sections, replaces the persona, and selects a task-conditioned first-turn tool subset | Approximated only through additive policy execution contracts; not named or advertised as DSH Spec mode |
+| spec/react/transition/weak bands | `router-core.mjs` quantizes a lightweight keyword classifier; transition is explicitly unstable | Not copied: Codex parent already performs semantic FAST/REACT/SPEC/DEEP routing; no weak/mixed policy is added |
+| weak model split | `WEAK_FLASH` carries recall/converge/anti-runaway guidance; `WEAK_PRO` is shorter, and source comments report extra Pro anchors/few-shot variants can hurt | Adopt asymmetric tuning: short Flash anti-repeat/environment guidance; minimal or no generic Pro tuning, decided by ablation |
+| first-user classification | `firstUserText` captures the first real `user/message` before assembly, fixing the one-turn lag | Recorded as fixed upstream; no workaround is imported |
+| near-field guidance | Real weak-mode user messages receive one simple/complex next-step inbox guide | P2 analogy only: probe Codex child identity first, then at most one Flash-only post-first-tool reminder if reliable and beneficial |
+| first-tool promotion | A durable tool call unlocks the full DSH tool catalog | Not copied without an equivalent Codex tool-surface API |
+| `dev_router_status` / `dev_router_mode` | Agent can inspect and override its DSH mode | Not adopted; optional diagnostics stay read-only and the Codex parent owns routing |
+| mode-isolated subagent | Fresh LLM call runs another DSH reasoning mode | Not adopted; DeepSeek workers cannot self-reroute or recursively construct a second runtime |
 
 Format: feature → source repo → source file → source symbol →
 target file in this project → adaptation required.
@@ -42,7 +73,7 @@ target file in this project → adaptation required.
 | claim / consume | Utopia-V | same | `run_target_hook_locked`, `quarantine_claim` | same target | claim-first-then-read kept verbatim; per-role claimed/failed names |
 | TTL reconcile | Utopia-V | same | `reconcile_claims` | same target (`reconcile`) | per-role |
 | POSIX lock | Utopia-V | same | `state_lock` | same target | per-role lock files + msvcrt fallback for the Python path |
-| child context builder | Utopia-V | same | inline in `run_target_hook_locked` | same target (`build_child_context`) | baseline section O structure |
+| child context builder | Utopia-V | same | inline in `run_target_hook_locked` | same target (`build_child_context`) | transport structure retained; first-turn behavior blocks are project-local |
 | Hook output shape | Utopia-V | same | `hookSpecificOutput.additionalContext` | same target | unchanged |
 | PowerShell variant | Utopia-V | `hooks/plaintext-handoff.ps1` | full protocol | `hooks/plaintext-handoff.ps1` | `-AgentType` parameter, policy/modality/packet fields, per-role files |
 | Hook JSON templates | Utopia-V | `hooks/hooks.posix.example.json`, `hooks/hooks.windows.example.json` | — | `hooks/hooks.json` | Plugin-owned, `PLUGIN_ROOT`-relative command and combined matcher `^(deepseek_flash|deepseek_pro)$` |
@@ -66,3 +97,23 @@ target file in this project → adaptation required.
 - Flash → Pro escalation protocol
 - Public Plugin Hook metadata trust check (never forged; Codex records trust itself)
 - `doctor` command and handoff-state diagnostics
+- Lightweight Reasoning Adapter (`runtime/reasoning.py`): two model anchors,
+  four execution contracts, convergence contract and route-matrix validation
+- Baseline-vs-Adapter execution dataset and Evidence Packet comparison harness
+
+## DSH-derived engineering inspiration
+
+The project re-implements, in its own compact language and architecture:
+
+- model-specific behavior conditioning;
+- first-turn anchoring;
+- convergence and anti-runaway guidance;
+- separate Flash/Pro empirical evaluation;
+- optional mechanical closure as an experimental idea only.
+
+It does **not** import the DSH runtime/injector, Standard/Spec surface names,
+dynamic tool catalog, weak/mixed modes, persona-vector system or learned
+router. Near-field remains a separately gated P2 analogy, not a port. The
+project also does not adopt retracted or unverified dual-attractor/persona
+theories as facts. DSH is an experimental-method and pinned-source reference,
+not an explanation of DeepSeek internals.
