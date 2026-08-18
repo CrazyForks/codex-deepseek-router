@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any, Mapping, Optional
 
 from .protocol import RouterError, ErrorCode
+from .reasoning import RouteContractError, validate_route_contract
 
 
 class RouteMode(str, Enum):
@@ -21,6 +22,29 @@ class Decision:
     mode: RouteMode
     reason: str
     score: float
+
+
+DEFAULT_POLICIES = {
+    RouteMode.FLASH: "FAST",
+    RouteMode.PRO: "REACT",
+}
+
+
+def resolve_policy(mode: RouteMode, policy: Optional[str]) -> Optional[str]:
+    if mode is RouteMode.CODEX:
+        return None
+    if policy is None:
+        resolved = DEFAULT_POLICIES[mode]
+    elif not isinstance(policy, str):
+        raise RouterError(ErrorCode.CONFIGURATION, "Fallback policy must be a string")
+    else:
+        resolved = policy.upper()
+    agent_type = "deepseek_flash" if mode is RouteMode.FLASH else "deepseek_pro"
+    try:
+        validate_route_contract(agent_type, resolved)
+    except RouteContractError as error:
+        raise RouterError(ErrorCode.CONFIGURATION, str(error)) from error
+    return resolved
 
 
 def _number(context: Mapping[str, Any], *keys: str) -> int:
@@ -53,15 +77,33 @@ def choose(mode: str, task: str, context: Optional[Mapping[str, Any]] = None) ->
 class Router:
     client_factory: Any
 
-    def route(self, task: str, context: Optional[Mapping[str, Any]] = None, mode: str = "auto", **kwargs: Any):
+    def route(
+        self,
+        task: str,
+        context: Optional[Mapping[str, Any]] = None,
+        mode: str = "auto",
+        *,
+        policy: Optional[str] = None,
+        **kwargs: Any,
+    ):
         decision = choose(mode, task, context)
         if decision.mode is RouteMode.CODEX:
             return {"mode": "codex", "status": "parent_required", "reason": decision.reason}
+        resolved_policy = resolve_policy(decision.mode, policy)
         client = self.client_factory(decision.mode.value)
-        return client.complete(task, context=context or {}, **kwargs)
+        return client.complete(task, context=context or {}, policy=resolved_policy, **kwargs)
 
 
-def route(task: str, context: Optional[Mapping[str, Any]] = None, mode: str = "auto", **kwargs: Any):
+def route(
+    task: str,
+    context: Optional[Mapping[str, Any]] = None,
+    mode: str = "auto",
+    *,
+    policy: Optional[str] = None,
+    **kwargs: Any,
+):
     from .client import DeepSeekClient
 
-    return Router(lambda selected: DeepSeekClient(selected)).route(task, context, mode, **kwargs)
+    return Router(lambda selected: DeepSeekClient(selected)).route(
+        task, context, mode, policy=policy, **kwargs
+    )

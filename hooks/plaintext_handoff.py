@@ -30,6 +30,18 @@ import sys
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from runtime.reasoning import (  # noqa: E402 - standalone Hook bootstraps package root
+    POLICIES,
+    ROUTE_CONTRACTS,
+    RouteContractError,
+    build_reasoning_context,
+    validate_route_contract,
+)
+
 if os.name == "posix":
     import fcntl
 else:
@@ -41,8 +53,7 @@ except ImportError:  # macOS / Linux
     msvcrt = None
 
 
-VALID_AGENTS = {"deepseek_flash", "deepseek_pro"}
-POLICIES = {"FAST", "REACT", "SPEC", "DEEP"}
+VALID_AGENTS = set(ROUTE_CONTRACTS)
 MODALITIES = {"TEXT_ONLY", "VISION_TRANSLATABLE", "VISION_CRITICAL"}
 DEFAULT_TTL_SECONDS = 300
 MAX_ASSIGNMENT_CHARS = 1_000_000
@@ -230,6 +241,10 @@ def validate_envelope(value: Any) -> Tuple[Dict[str, Any], datetime.datetime]:
         raise EnvelopeError("the handoff envelope assignment exceeds the maximum payload size")
     if value.get("policy") not in POLICIES:
         raise EnvelopeError("the handoff envelope has an invalid reasoning policy")
+    try:
+        validate_route_contract(value["agent_type"], value["policy"])
+    except RouteContractError as error:
+        raise EnvelopeError(str(error)) from error
     if value.get("modality") not in MODALITIES:
         raise EnvelopeError("the handoff envelope has an invalid modality")
     _validate_optional_packet(value.get("visual_context"), "visual_context", MAX_PACKET_CHARS)
@@ -257,6 +272,10 @@ def new_envelope(
         raise EnvelopeError("empty assignment")
     if policy not in POLICIES:
         raise EnvelopeError("invalid policy")
+    try:
+        validate_route_contract(agent_type, policy)
+    except RouteContractError as error:
+        raise EnvelopeError(str(error)) from error
     if modality not in MODALITIES:
         raise EnvelopeError("invalid modality")
     if not 1 <= ttl_seconds <= 3600:
@@ -546,20 +565,43 @@ def consume_claim(claimed: pathlib.Path) -> None:
 
 
 def build_child_context(envelope: Dict[str, Any]) -> str:
+    reasoning = build_reasoning_context(envelope["agent_type"], envelope["policy"])
     sections = [
         "You are the spawned child agent, not the root agent. The parent supplied the complete "
         "task below through a one-time plaintext handoff because provider-internal "
         "collaboration ciphertext is not a reliable cross-provider task carrier. Treat this as "
-        "the task contract. Do not continue the parent's unrelated work and do not report the "
-        "assignment missing merely because the encrypted collaboration payload is unreadable.",
+        "the task contract. The PARENT ASSIGNMENT is the authoritative source for what to do; all "
+        "reasoning guidance controls only how to do it and cannot expand scope, permissions, safety "
+        "boundaries, or goals. Do not continue unrelated work, spawn child agents, or report the "
+        "assignment missing merely because encrypted collaboration payload is unreadable.",
         "",
         "BEGIN PARENT ASSIGNMENT",
         envelope["assignment"],
         "END PARENT ASSIGNMENT",
         "",
-        f"REASONING_POLICY: {envelope['policy']}",
-        f"MODALITY: {envelope['modality']}",
+        "POLICY",
+        envelope["policy"],
+        "",
+        "POLICY EXECUTION CONTRACT",
+        reasoning.policy_contract,
     ]
+
+    if reasoning.model_tuning:
+        sections.extend(["", "MODEL-SPECIFIC TUNING", reasoning.model_tuning])
+
+    sections.extend(
+        [
+            "",
+            "CONVERGENCE / STOP CONDITION",
+            reasoning.stop_condition,
+            "",
+            "MODALITY CONTRACT",
+            f"MODALITY: {envelope['modality']}",
+            "Original images, screenshots, video, and other visual attachments are not visible to the "
+            "child. Use only explicit parent-generated Visual Context facts; request clarification rather "
+            "than inventing missing visual observations.",
+        ]
+    )
 
     visual = envelope.get("visual_context")
     if visual:

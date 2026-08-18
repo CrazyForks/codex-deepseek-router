@@ -140,11 +140,15 @@ def test_catalog_registers_both_models_and_roles():
 # ---------------------------------------------------------------------------
 
 
-def test_handoff_validates_router_policies():
+def test_handoff_validates_router_policy_matrix():
     envelope = handoff.new_envelope(
-        agent_type="deepseek_flash", assignment="x", policy="DEEP", modality="TEXT_ONLY"
+        agent_type="deepseek_pro", assignment="x", policy="DEEP", modality="TEXT_ONLY"
     )
     assert handoff.validate_envelope(envelope)[0]["policy"] == "DEEP"
+    with pytest.raises(handoff.EnvelopeError, match="requires deepseek_pro"):
+        handoff.new_envelope(
+            agent_type="deepseek_flash", assignment="x", policy="DEEP", modality="TEXT_ONLY"
+        )
 
 
 def test_handoff_rejects_unknown_policy():
