@@ -88,6 +88,7 @@
     "task": "Investigate the conflicting lease evidence. Follow the escalation contract exactly if this needs deep concurrency reasoning.",
     "context": {"renew.py": "renew writes expires_at then version", "settle.py": "settle reads version then expires_at without a lock", "trace_a": "version=8 expires_at=old", "trace_b": "version=7 expires_at=new"},
     "checks": {"contains_all": ["escalate_to_pro", "observations", "recommended_next_step"]},
+    "pro_checks": {"contains_any": ["atomic", "snapshot", "lock", "transaction"]},
     "evidence_escalation": true
   },
   {
@@ -98,6 +99,7 @@
     "task": "Assess the authorization mismatch. Escalate with the required evidence fields if the cross-module security invariant cannot be established safely.",
     "context": {"api.py": "authorize(user, project); queue(project.id, user.id)", "worker.py": "load project by id; trusts queued user id", "audit.log": "queued user differs from execution user after account merge"},
     "checks": {"contains_all": ["escalate_to_pro", "observations", "open_questions"]},
+    "pro_checks": {"contains_any": ["revalidate", "authorization", "identity", "principal"]},
     "evidence_escalation": true
   },
   {
@@ -108,6 +110,7 @@
     "task": "Trace the state mismatch. Escalate with an Evidence Packet if the cross-module invariant is unresolved.",
     "context": {"writer.py": "persist(data); publish(version)", "reader.py": "on publish: cache.load(version)", "storage.txt": "persist may return before replica visibility", "trace": "publish v9 then reader loads v8"},
     "checks": {"contains_all": ["escalate_to_pro", "hypotheses", "relevant_files"]},
+    "pro_checks": {"contains_any": ["visibility", "barrier", "ordering", "read-after-write"]},
     "evidence_escalation": true
   },
   {

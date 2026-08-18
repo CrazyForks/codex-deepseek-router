@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Optional
 
 
-REASONING_ADAPTER_VERSION = 1
+REASONING_ADAPTER_VERSION = 5
 
 FLASH_AGENT = "deepseek_flash"
 PRO_AGENT = "deepseek_pro"
@@ -57,9 +57,9 @@ DEEP_CONTRACT = (
 )
 
 FLASH_TUNING = (
-    "Continue from the parent assignment and supplied evidence. Do not repeat confirmed reads, run "
-    "environment ceremony (echo, whoami, uname, version, date), or start unbounded repo-wide searches. "
-    "Return when sufficient; escalate rather than reading indefinitely beyond the Flash contract."
+    "Use the supplied evidence directly and obey the assignment's requested output and honesty "
+    "constraints. Do extra discovery only when a missing fact blocks the answer. Keep the response "
+    "focused; when the policy requires escalation, return the required Evidence Packet promptly."
 )
 
 # Pinned DSH source reports that extra generic recall/converge anchors can hurt Pro.
@@ -72,6 +72,13 @@ STOP_CONDITIONS = {
     "SPEC": "Stop after one root cause is supported, material alternatives are eliminated, and the fix or recommendation is verified where possible.",
     "DEEP": "Stop when information is sufficient to distinguish the main alternatives and further analysis would add completeness without changing the decision.",
 }
+
+FLASH_SPEC_STOP = (
+    "If the supplied evidence involves concurrency, distributed invariants, fencing, security "
+    "boundaries, complex architecture, conflicting modules, or edit-dependent verification, stop "
+    "analysis and return ESCALATE_TO_PRO with the complete Evidence Packet; do not solve it in Flash. "
+    "Otherwise stop when the bounded root cause is supported and material alternatives are eliminated."
+)
 
 BLOCKED_CONTRACT = (
     "If blocked, return BLOCKED with what is missing, why it matters, and the minimum next step."
@@ -137,7 +144,8 @@ def get_model_tuning(agent_type: str, policy: str) -> str:
 
 def get_stop_condition(agent_type: str, policy: str) -> str:
     validate_route_contract(agent_type, policy)
-    return STOP_CONDITIONS[policy] + " " + BLOCKED_CONTRACT
+    stop = FLASH_SPEC_STOP if agent_type == FLASH_AGENT and policy == "SPEC" else STOP_CONDITIONS[policy]
+    return stop + " " + BLOCKED_CONTRACT
 
 
 def build_reasoning_context(agent_type: str, policy: str) -> ReasoningContext:

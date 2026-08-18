@@ -25,6 +25,12 @@ OUTPUT_CONTRACT = (
     "and evidence fields observed/inferred/recommended/uncertain. Provide only a concise reasoning "
     "summary; do not expose hidden chain-of-thought."
 )
+FLASH_SPEC_OUTPUT_EXTENSION = (
+    " This text-only Flash SPEC fallback always hands its bounded analysis to Pro: set "
+    "escalate_to_pro to true and return evidence_packet with "
+    "schema, summary, relevant_files, observations, hypotheses, eliminated, open_questions, and "
+    "recommended_next_step. Do not claim final resolution, edits, or verification in Flash."
+)
 GUIDANCE_VARIANTS = {"current", "contract_only", "contract_tuning"}
 
 
@@ -63,13 +69,16 @@ def build_fallback_prompt(
     ]
     if guidance_variant == "contract_tuning" and reasoning.model_tuning:
         sections.append("MODEL-SPECIFIC TUNING\n" + reasoning.model_tuning)
+    output_contract = OUTPUT_CONTRACT
+    if agent_type == "deepseek_flash" and policy == "SPEC":
+        output_contract += FLASH_SPEC_OUTPUT_EXTENSION
     sections.extend(
         [
             "CONVERGENCE / STOP CONDITION\n" + reasoning.stop_condition,
             "CAPABILITY BOUNDARY\nThis is an explicit text-only fallback request, not the native Codex "
             "subagent tool environment. Use only supplied context; do not claim unprovided tool access, "
             "workspace edits, commands, or tests.",
-            "OUTPUT FORMAT\n" + OUTPUT_CONTRACT,
+            "OUTPUT FORMAT\n" + output_contract,
         ]
     )
     return "\n\n".join(sections)
@@ -139,6 +148,37 @@ def _list_field(value: Any) -> list:
     return [value]
 
 
+def _string_list(value: Any) -> list:
+    rendered = []
+    for item in _list_field(value):
+        rendered.append(
+            item if isinstance(item, str) else json.dumps(item, ensure_ascii=False, sort_keys=True)
+        )
+    return rendered
+
+
+def _fallback_evidence_packet(structured: Mapping[str, Any], evidence: Mapping[str, Any]) -> Dict[str, Any]:
+    packet = structured.get("evidence_packet")
+    packet = dict(packet) if isinstance(packet, Mapping) else {}
+    recommendations = _string_list(structured.get("recommendations"))
+    recommended = _string_list(evidence.get("recommended"))
+    return {
+        "schema": 1,
+        "summary": str(packet.get("summary") or structured.get("summary") or "Flash SPEC analysis requires Pro continuation."),
+        "relevant_files": _string_list(packet.get("relevant_files") or structured.get("relevant_files")),
+        "observations": _string_list(packet.get("observations") or evidence.get("observed") or structured.get("findings")),
+        "hypotheses": _string_list(packet.get("hypotheses") or evidence.get("inferred")),
+        "eliminated": _string_list(packet.get("eliminated")),
+        "open_questions": _string_list(packet.get("open_questions") or evidence.get("uncertain")),
+        "recommended_next_step": str(
+            packet.get("recommended_next_step")
+            or (recommendations[0] if recommendations else None)
+            or (recommended[0] if recommended else None)
+            or "Continue with deepseek_pro using this Evidence Packet."
+        ),
+    }
+
+
 @dataclass
 class DeepSeekClient:
     mode: str
@@ -191,6 +231,15 @@ class DeepSeekClient:
                 structured = _structured(text)
                 evidence = structured.get("evidence")
                 evidence = evidence if isinstance(evidence, Mapping) else {}
+                if self.mode == "flash" and resolved_policy == "SPEC":
+                    evidence_packet = _fallback_evidence_packet(structured, evidence)
+                    escalate_to_pro = True
+                else:
+                    evidence_packet = structured.get("evidence_packet")
+                    evidence_packet = (
+                        dict(evidence_packet) if isinstance(evidence_packet, Mapping) else {}
+                    )
+                    escalate_to_pro = structured.get("escalate_to_pro") is True
                 usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
                 usage = {**usage, "model": MODELS[self.mode], "latency_ms": round((time.monotonic() - started) * 1000), "request_id": request_id}
                 return RoutingResult(
@@ -207,6 +256,8 @@ class DeepSeekClient:
                     inferred=_list_field(evidence.get("inferred")),
                     recommended=_list_field(evidence.get("recommended")),
                     uncertain=_list_field(evidence.get("uncertain")),
+                    escalate_to_pro=escalate_to_pro,
+                    evidence_packet=evidence_packet,
                     usage=usage,
                 ).to_dict()
             except urllib.error.HTTPError as exc:

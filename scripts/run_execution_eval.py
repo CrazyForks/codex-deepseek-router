@@ -28,6 +28,16 @@ from runtime.reasoning import (  # noqa: E402
 DEFAULT_DATASET = ROOT / "eval" / "execution-golden-tasks.json"
 BASELINE_FIXTURE = ROOT / "eval" / "baseline-3aa3bf2.json"
 ABLATION_VARIANTS = ("current", "contract_only", "contract_tuning")
+EVIDENCE_PACKET_FIELDS = {
+    "schema",
+    "summary",
+    "relevant_files",
+    "observations",
+    "hypotheses",
+    "eliminated",
+    "open_questions",
+    "recommended_next_step",
+}
 
 
 def load_tasks(path: pathlib.Path) -> List[Dict[str, Any]]:
@@ -53,14 +63,17 @@ def load_baseline() -> Dict[str, Any]:
     return json.loads(BASELINE_FIXTURE.read_text(encoding="utf-8"))
 
 
-def score(task: Dict[str, Any], result: Dict[str, Any]) -> bool:
+def score_checks(checks: Dict[str, Any], result: Dict[str, Any]) -> bool:
     text = json.dumps(result, ensure_ascii=False).lower()
-    checks = task["checks"]
     all_ok = all(str(marker).lower() in text for marker in checks.get("contains_all", []))
     any_values = checks.get("contains_any", [])
     any_ok = not any_values or any(str(marker).lower() in text for marker in any_values)
     excludes_ok = all(str(marker).lower() not in text for marker in checks.get("excludes", []))
     return all_ok and any_ok and excludes_ok
+
+
+def score(task: Dict[str, Any], result: Dict[str, Any]) -> bool:
+    return score_checks(task["checks"], result)
 
 
 def experiment_assignment(task: Dict[str, Any], variant: str) -> str:
@@ -109,9 +122,7 @@ def provider_prompt(task: Dict[str, Any], variant: str) -> str:
 
 def public_usage(result: Dict[str, Any]) -> Dict[str, Any]:
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-    allowed = {
-        "input_tokens", "output_tokens", "total_tokens", "latency_ms", "model", "request_id"
-    }
+    allowed = {"input_tokens", "output_tokens", "total_tokens", "latency_ms", "model"}
     return {key: value for key, value in usage.items() if key in allowed}
 
 
@@ -142,6 +153,8 @@ def run_one(
         "deepseek_input_tokens": None,
         "deepseek_output_tokens": None,
         "parent_rework": None,
+        "escalate_to_pro": None,
+        "evidence_packet_complete": None,
         "guidance_chars": len(experiment),
         "added_guidance_chars": guidance_delta,
         "estimated_added_prompt_tokens": math.ceil(guidance_delta / 4),
@@ -160,6 +173,11 @@ def run_one(
     except RouterError as error:
         return {**base, "success": False, "notes": f"provider error: {error.code.value}"}
     usage = public_usage(result)
+    evidence_packet = result.get("evidence_packet")
+    evidence_packet_complete = (
+        isinstance(evidence_packet, dict)
+        and EVIDENCE_PACKET_FIELDS <= set(evidence_packet)
+    )
     return {
         **base,
         "success": score(task, result),
@@ -167,6 +185,8 @@ def run_one(
         "latency_ms": usage.get("latency_ms"),
         "deepseek_input_tokens": usage.get("input_tokens"),
         "deepseek_output_tokens": usage.get("output_tokens"),
+        "escalate_to_pro": result.get("escalate_to_pro") is True,
+        "evidence_packet_complete": evidence_packet_complete,
         "notes": "automatic content rubric; no native tool trace",
         "result_sha256": hashlib.sha256(
             json.dumps(result, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -194,7 +214,8 @@ def run_evidence_packet(task: Dict[str, Any], live: bool) -> Iterable[Dict[str, 
         task["task"], context=task["context"], policy="SPEC"
     )
     continued_context = dict(task["context"])
-    continued_context["flash_evidence_packet"] = flash
+    packet = flash.get("evidence_packet")
+    continued_context["flash_evidence_packet"] = packet if isinstance(packet, dict) else {}
     continued = DeepSeekClient("pro").complete(
         "Continue from the supplied Flash Evidence Packet. Do not rescan by default. " + task["task"],
         context=continued_context,
@@ -206,7 +227,9 @@ def run_evidence_packet(task: Dict[str, Any], live: bool) -> Iterable[Dict[str, 
             "variant": "contract_tuning",
             "adapter_version": REASONING_ADAPTER_VERSION,
             "route": route,
-            "success": score(task, result) if route == "flash" else result.get("status") == "completed",
+            "success": score(task, result)
+            if route == "flash"
+            else score_checks(task["pro_checks"], result),
             "usage": public_usage(result),
             "duplicate_read_count": None,
             "parent_rework": None,
@@ -217,16 +240,22 @@ def run_evidence_packet(task: Dict[str, Any], live: bool) -> Iterable[Dict[str, 
         }
 
 
-def _write_records(records: List[Dict[str, Any]], output: pathlib.Path = None) -> None:
-    rendered = "".join(
-        json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-        for record in records
-    )
+def _record_writer(output: pathlib.Path = None):
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(rendered, encoding="utf-8")
-    else:
-        sys.stdout.write(rendered)
+        output.write_text("", encoding="utf-8")
+
+    def emit(record: Dict[str, Any]) -> None:
+        line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        if output:
+            with output.open("a", encoding="utf-8") as stream:
+                stream.write(line)
+                stream.flush()
+        else:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+    return emit
 
 
 def main(argv=None) -> int:
@@ -260,18 +289,18 @@ def main(argv=None) -> int:
                 by_policy[task["category"]] += 1
         tasks = smoke
 
-    records = []
+    emit = _record_writer(args.output)
     if args.evidence_packet:
         tasks = [task for task in tasks if task.get("evidence_escalation")]
         for task in tasks:
-            records.extend(run_evidence_packet(task, args.live))
+            for record in run_evidence_packet(task, args.live):
+                emit(record)
     else:
         variants = ABLATION_VARIANTS if args.variant == "all" else (args.variant,)
         for repetition in range(1, args.repetitions + 1):
             for task in tasks:
                 for variant in variants:
-                    records.append(run_one(task, variant, args.live, repetition))
-    _write_records(records, args.output)
+                    emit(run_one(task, variant, args.live, repetition))
     return 0
 
 

@@ -106,7 +106,7 @@ def test_fallback_ablation_omits_only_flash_tuning():
     )
     assert "MODEL-SPECIFIC TUNING" not in contract_only
     assert "MODEL-SPECIFIC TUNING" in full
-    assert "environment ceremony" in full
+    assert "supplied evidence directly" in full
 
 
 def test_fallback_pro_has_no_generic_model_tuning():
@@ -118,7 +118,19 @@ def test_fallback_pro_has_no_generic_model_tuning():
     )
     assert contract_only == full
     assert "MODEL-SPECIFIC TUNING" not in full
-    assert "environment ceremony" not in full
+    assert "supplied evidence directly" not in full
+
+
+def test_fallback_flash_spec_requests_structured_evidence_packet_only_for_spec():
+    spec = build_fallback_prompt(
+        "flash", "SPEC", "TASK\ninspect", guidance_variant="contract_tuning"
+    )
+    fast = build_fallback_prompt(
+        "flash", "FAST", "TASK\ninspect", guidance_variant="contract_tuning"
+    )
+    assert "escalate_to_pro" in spec
+    assert "recommended_next_step" in spec
+    assert "escalate_to_pro" not in fast
 
 
 def test_router_passes_policy_to_selected_client():
@@ -192,6 +204,55 @@ def test_client_normalizes_object_fields_without_exposing_preamble(monkeypatch):
     assert result["findings"] == [{"timeout": 12}]
     assert result["evidence"]["observed"] == [{"source": "cli"}]
     assert "I should" not in json.dumps(result)
+
+
+def test_client_preserves_structured_flash_escalation(monkeypatch):
+    class EscalationResponse(FakeResponse):
+        def read(self):
+            return json.dumps({
+                "output_text": json.dumps({
+                    "summary": "needs deep concurrency reasoning",
+                    "escalate_to_pro": True,
+                    "evidence_packet": {
+                        "schema": 1,
+                        "summary": "conflicting lease snapshot",
+                        "relevant_files": ["renew.py", "settle.py"],
+                        "observations": ["fields are read and written separately"],
+                        "hypotheses": ["torn logical snapshot"],
+                        "eliminated": [],
+                        "open_questions": ["atomicity boundary"],
+                        "recommended_next_step": "verify the storage transaction boundary",
+                    },
+                })
+            }).encode()
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    result = DeepSeekClient(
+        "flash", opener=lambda request, timeout: EscalationResponse()
+    ).complete("inspect", policy="SPEC")
+    assert result["escalate_to_pro"] is True
+    assert result["evidence_packet"]["schema"] == 1
+    assert result["evidence_packet"]["recommended_next_step"]
+
+
+def test_flash_spec_fallback_builds_packet_when_provider_omits_it(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    result = DeepSeekClient(
+        "flash", opener=lambda request, timeout: FakeResponse()
+    ).complete("inspect", policy="SPEC")
+    packet = result["evidence_packet"]
+    assert result["escalate_to_pro"] is True
+    assert set(packet) == {
+        "schema",
+        "summary",
+        "relevant_files",
+        "observations",
+        "hypotheses",
+        "eliminated",
+        "open_questions",
+        "recommended_next_step",
+    }
+    assert packet["summary"] == "ok"
 
 
 def test_client_maps_missing_key(monkeypatch):

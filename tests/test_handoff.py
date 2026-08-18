@@ -372,7 +372,7 @@ def test_build_child_context_contains_all_sections():
     assert "END EVIDENCE PACKET" in context
     assert context.index("BEGIN PARENT ASSIGNMENT") < context.index("POLICY EXECUTION CONTRACT")
     assert "MODEL-SPECIFIC TUNING" not in context
-    assert "environment ceremony" not in context
+    assert "supplied evidence directly" not in context
 
 
 def test_first_turn_context_preserves_hard_invariants():
@@ -388,7 +388,7 @@ def test_first_turn_context_preserves_hard_invariants():
     assert "cannot expand scope, permissions, safety boundaries, or goals" in flash
     assert "Do not modify the workspace" in flash
     assert "MODEL-SPECIFIC TUNING" in flash
-    assert "environment ceremony" in flash
+    assert "supplied evidence directly" in flash
     assert "Original images" in flash
     assert "spawn child agents" in flash
     assert "chain-of-thought" not in flash.lower()
@@ -572,7 +572,7 @@ def test_python_and_powershell_protocol_parity():
         "CONVERGENCE / STOP CONDITION",
         "Do not modify the workspace",
         "ESCALATE_TO_PRO",
-        "environment ceremony",
+        "supplied evidence directly",
         "Original images",
         "authoritative source",
     ):

@@ -1527,8 +1527,8 @@ def install_hook_files(paths: Paths, manifest: Dict[str, Any]) -> None:
     source_dir = package_root() / "hooks"
     paths.hooks_install_dir.mkdir(parents=True, exist_ok=True)
     for name, hash_key in (
-        ("plaintext_handoff.py", "hook_script_py"),
-        ("plaintext-handoff.ps1", "hook_script_ps1"),
+        ("plaintext_handoff.py", "handoff_script_py"),
+        ("plaintext-handoff.ps1", "handoff_script_ps1"),
     ):
         source = source_dir / name
         target = paths.hooks_install_dir / name
@@ -1835,9 +1835,19 @@ def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[s
     changed["catalog"] = install_catalog(paths, manifest)
     changed["flash_agent"] = install_agent(paths, AGENT_SPECS[FLASH_ROLE], manifest)
     changed["pro_agent"] = install_agent(paths, AGENT_SPECS[PRO_ROLE], manifest)
-    before = {key: path.is_file() for key, path in managed_asset_paths(paths).items() if key.startswith("handoff_script_")}
+    handoff_paths = {
+        key: path
+        for key, path in managed_asset_paths(paths).items()
+        if key.startswith("handoff_script_")
+    }
+    before = {
+        key: sha256_file(path) if path.is_file() else None
+        for key, path in handoff_paths.items()
+    }
     install_hook_files(paths, manifest)
-    changed["handoff_runtime"] = any(not before.get(key, False) for key in before)
+    changed["handoff_runtime"] = any(
+        before[key] != sha256_file(path) for key, path in handoff_paths.items()
+    )
     return changed, False
 
 

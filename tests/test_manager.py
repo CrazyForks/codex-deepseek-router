@@ -684,6 +684,24 @@ def test_repair_requires_fresh_live_tests(paths, fake_codex, no_credentials, tru
     assert status["last_test"] is None
 
 
+def test_repair_refreshes_previous_managed_handoff_runtime(
+    paths, fake_codex, no_credentials
+):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    target = paths.hooks_install_dir / "plaintext_handoff.py"
+    target.write_text("# previous router-managed version\n")
+    manifest = manager.read_manifest(paths)
+    manifest["hashes"]["handoff_script_py"] = manager.sha256_file(target)
+    manager.write_manifest(paths, manifest)
+
+    repaired = manager.repair(paths, fake_codex)
+
+    assert repaired["changed"]["handoff_runtime"] is True
+    assert target.read_bytes() == (
+        Path(manager.__file__).resolve().parents[1] / "hooks" / "plaintext_handoff.py"
+    ).read_bytes()
+
+
 @pytest.mark.skip(reason="Legacy Hook assets are migrated explicitly, not repaired")
 def test_repair_migrates_legacy_normalized_asset_hashes(paths, fake_codex, no_credentials):
     manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)

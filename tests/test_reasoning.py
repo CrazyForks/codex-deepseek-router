@@ -27,7 +27,7 @@ def test_flash_deep_is_rejected_with_actionable_error():
 
 
 def test_adapter_has_one_version_and_four_parent_selected_policies():
-    assert reasoning.REASONING_ADAPTER_VERSION == 1
+    assert reasoning.REASONING_ADAPTER_VERSION == 5
     assert set(reasoning.VALID_ROUTE_MATRIX) == {"deepseek_flash", "deepseek_pro"}
     assert reasoning.POLICIES == {"FAST", "REACT", "SPEC", "DEEP"}
     assert "weak" not in reasoning.POLICIES
@@ -60,10 +60,18 @@ def test_deep_is_information_driven_and_has_decision_closure():
 def test_model_tuning_is_deliberately_asymmetric():
     flash = reasoning.get_model_tuning("deepseek_flash", "FAST")
     pro = reasoning.get_model_tuning("deepseek_pro", "REACT")
-    for marker in ("confirmed reads", "environment ceremony", "unbounded repo-wide"):
+    for marker in ("supplied evidence directly", "requested output", "missing fact"):
         assert marker in flash
     assert pro == ""
     assert reasoning.PRO_TUNING_MINIMAL == ""
+
+
+def test_flash_spec_stop_condition_escalates_instead_of_solving_deep_categories():
+    stop = reasoning.get_stop_condition("deepseek_flash", "SPEC")
+    assert "stop analysis" in stop
+    assert "ESCALATE_TO_PRO" in stop
+    assert "do not solve it in Flash" in stop
+    assert "root cause is supported" in reasoning.get_stop_condition("deepseek_pro", "SPEC")
 
 
 @pytest.mark.parametrize(("agent_type", "policy"), VALID_ROUTES)

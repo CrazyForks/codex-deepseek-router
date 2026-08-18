@@ -49,6 +49,8 @@ class RoutingResult:
     inferred: List[str] = field(default_factory=list)
     recommended: List[str] = field(default_factory=list)
     uncertain: List[str] = field(default_factory=list)
+    escalate_to_pro: bool = False
+    evidence_packet: Dict[str, Any] = field(default_factory=dict)
     error: Optional[Dict[str, Any]] = None
     usage: Dict[str, Any] = field(default_factory=dict)
 
@@ -69,6 +71,8 @@ class RoutingResult:
                 "recommended": self.recommended,
                 "uncertain": self.uncertain,
             },
+            "escalate_to_pro": self.escalate_to_pro,
+            "evidence_packet": self.evidence_packet,
             "error": self.error,
             "usage": self.usage,
         }

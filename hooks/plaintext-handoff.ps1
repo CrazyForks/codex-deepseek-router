@@ -153,14 +153,20 @@ function Get-ReasoningContext([string]$Agent, [string]$ReasoningPolicy) {
     }
 
     $modelTuning = if ($Agent -eq "deepseek_flash") {
-        "Continue from the parent assignment and supplied evidence. Do not repeat confirmed reads, run environment ceremony (echo, whoami, uname, version, date), or start unbounded repo-wide searches. Return when sufficient; escalate rather than reading indefinitely beyond the Flash contract."
+        "Use the supplied evidence directly and obey the assignment's requested output and honesty constraints. Do extra discovery only when a missing fact blocks the answer. Keep the response focused; when the policy requires escalation, return the required Evidence Packet promptly."
     } else {
         ""
     }
     $stopCondition = switch ($ReasoningPolicy) {
         "FAST" { "Stop when direct evidence supports the answer and no unresolved issue can materially change it." }
         "REACT" { "Stop when the smallest coherent change or proposal is complete and its required verification is reported honestly." }
-        "SPEC" { "Stop after one root cause is supported, material alternatives are eliminated, and the fix or recommendation is verified where possible." }
+        "SPEC" {
+            if ($Agent -eq "deepseek_flash") {
+                "If the supplied evidence involves concurrency, distributed invariants, fencing, security boundaries, complex architecture, conflicting modules, or edit-dependent verification, stop analysis and return ESCALATE_TO_PRO with the complete Evidence Packet; do not solve it in Flash. Otherwise stop when the bounded root cause is supported and material alternatives are eliminated."
+            } else {
+                "Stop after one root cause is supported, material alternatives are eliminated, and the fix or recommendation is verified where possible."
+            }
+        }
         "DEEP" { "Stop when information is sufficient to distinguish the main alternatives and further analysis would add completeness without changing the decision." }
     }
     [pscustomobject]@{
