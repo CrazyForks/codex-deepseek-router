@@ -1,0 +1,149 @@
+[
+  {
+    "task_id": "fast-callers",
+    "category": "FAST",
+    "agent": "flash",
+    "policy": "FAST",
+    "task": "List every direct caller of create_job in the supplied repository excerpt. Return only names supported by the excerpt.",
+    "context": {"src/jobs.py": "def create_job(spec): return spec\ndef submit(spec): return create_job(spec)\ndef retry(spec): return submit(spec)", "src/api.py": "from .jobs import create_job\ndef post_job(body): return create_job(body)"},
+    "checks": {"contains_all": ["submit", "post_job"], "excludes": ["retry"]}
+  },
+  {
+    "task_id": "fast-config-precedence",
+    "category": "FAST",
+    "agent": "flash",
+    "policy": "FAST",
+    "task": "Identify the effective timeout and its direct source. Do not explore unrelated configuration.",
+    "context": {"defaults.toml": "timeout = 30", "environment": "APP_TIMEOUT=45", "cli": "--timeout 12", "precedence": "CLI overrides environment; environment overrides defaults."},
+    "checks": {"contains_all": ["12", "cli"]}
+  },
+  {
+    "task_id": "fast-earliest-log",
+    "category": "FAST",
+    "agent": "flash",
+    "policy": "FAST",
+    "task": "Find the earliest anomaly that can explain the later request failure.",
+    "context": {"service.log": "12:00:01 INFO request accepted\n12:00:03 WARN lease expired for job=7\n12:00:05 ERROR write rejected for job=7\n12:00:06 ERROR request failed"},
+    "checks": {"contains_all": ["12:00:03", "lease expired"]}
+  },
+  {
+    "task_id": "fast-test-coverage",
+    "category": "FAST",
+    "agent": "flash",
+    "policy": "FAST",
+    "task": "Name the test that directly covers expired handoff replacement.",
+    "context": {"tests/test_handoff.py": "def test_stage_publishes_pending(): ...\ndef test_expired_pending_can_be_replaced(): ...\ndef test_claim_without_pending_raises(): ..."},
+    "checks": {"contains_all": ["test_expired_pending_can_be_replaced"]}
+  },
+  {
+    "task_id": "react-flash-proposal",
+    "category": "REACT",
+    "agent": "flash",
+    "policy": "REACT",
+    "task": "Propose the smallest change that renames local tmp to buffer without changing the public API. Do not claim to edit or test it.",
+    "context": {"src/encode.py": "def encode(value):\n    tmp = value.strip()\n    return tmp.encode()", "tests/test_encode.py": "def test_encode(): assert encode(' x ') == b'x'"},
+    "checks": {"contains_all": ["buffer", "src/encode.py"], "excludes": ["i edited", "tests passed"]}
+  },
+  {
+    "task_id": "react-off-by-one",
+    "category": "REACT",
+    "agent": "pro",
+    "policy": "REACT",
+    "task": "Give the smallest coherent patch for the IndexError and name the focused verification.",
+    "context": {"src/last.py": "def values(items):\n    return [items[i] for i in range(len(items) + 1)]", "failure": "IndexError on values([1])"},
+    "checks": {"contains_all": ["range(len(items))", "values([1])"]}
+  },
+  {
+    "task_id": "react-timeout-validation",
+    "category": "REACT",
+    "agent": "pro",
+    "policy": "REACT",
+    "task": "Propose a bounded validation change: timeout must be between 1 and 3600 inclusive. Include focused boundary tests.",
+    "context": {"runtime/config.py": "def validate(timeout):\n    return int(timeout)", "scope": "Only runtime/config.py and its unit test may change."},
+    "checks": {"contains_all": ["1", "3600", "0", "3601"]}
+  },
+  {
+    "task_id": "react-deduplicate",
+    "category": "REACT",
+    "agent": "pro",
+    "policy": "REACT",
+    "task": "Refactor only the duplicated normalization into one helper while preserving both outputs. Provide the focused tests.",
+    "context": {"src/names.py": "def user_name(x): return x.strip().lower()\ndef group_name(x): return x.strip().lower()"},
+    "checks": {"contains_all": ["strip", "lower", "helper"]}
+  },
+  {
+    "task_id": "spec-callback-lifecycle",
+    "category": "SPEC",
+    "agent": "pro",
+    "policy": "SPEC",
+    "task": "Find the root cause of duplicate callbacks and recommend the smallest fix.",
+    "context": {"src/worker.py": "def finish(job):\n    callbacks[job.id]()\n    callbacks.pop(job.id, None)", "trace": "finish(job=4) enters twice concurrently; both reads happen before either pop; callback count=2"},
+    "checks": {"contains_all": ["race", "atomic"], "contains_any": ["pop before", "lock", "remove before"]}
+  },
+  {
+    "task_id": "spec-flash-concurrency-escalation",
+    "category": "SPEC",
+    "agent": "flash",
+    "policy": "SPEC",
+    "task": "Investigate the conflicting lease evidence. Follow the escalation contract exactly if this needs deep concurrency reasoning.",
+    "context": {"renew.py": "renew writes expires_at then version", "settle.py": "settle reads version then expires_at without a lock", "trace_a": "version=8 expires_at=old", "trace_b": "version=7 expires_at=new"},
+    "checks": {"contains_all": ["escalate_to_pro", "observations", "recommended_next_step"]},
+    "evidence_escalation": true
+  },
+  {
+    "task_id": "spec-flash-security-escalation",
+    "category": "SPEC",
+    "agent": "flash",
+    "policy": "SPEC",
+    "task": "Assess the authorization mismatch. Escalate with the required evidence fields if the cross-module security invariant cannot be established safely.",
+    "context": {"api.py": "authorize(user, project); queue(project.id, user.id)", "worker.py": "load project by id; trusts queued user id", "audit.log": "queued user differs from execution user after account merge"},
+    "checks": {"contains_all": ["escalate_to_pro", "observations", "open_questions"]},
+    "evidence_escalation": true
+  },
+  {
+    "task_id": "spec-flash-invariant-escalation",
+    "category": "SPEC",
+    "agent": "flash",
+    "policy": "SPEC",
+    "task": "Trace the state mismatch. Escalate with an Evidence Packet if the cross-module invariant is unresolved.",
+    "context": {"writer.py": "persist(data); publish(version)", "reader.py": "on publish: cache.load(version)", "storage.txt": "persist may return before replica visibility", "trace": "publish v9 then reader loads v8"},
+    "checks": {"contains_all": ["escalate_to_pro", "hypotheses", "relevant_files"]},
+    "evidence_escalation": true
+  },
+  {
+    "task_id": "deep-fencing",
+    "category": "DEEP",
+    "agent": "pro",
+    "policy": "DEEP",
+    "task": "Choose a concrete stale-writer defense for a renewable lease system. State the invariant, material failure mode, decision, and verification.",
+    "context": {"system": "Workers may pause beyond lease expiry and resume after a new worker acquires the same job. Storage supports conditional writes on an integer token."},
+    "checks": {"contains_all": ["fencing", "monotonic", "conditional"]}
+  },
+  {
+    "task_id": "deep-idempotency",
+    "category": "DEEP",
+    "agent": "pro",
+    "policy": "DEEP",
+    "task": "Decide how to prevent duplicate settlement under at-least-once delivery. Compare the relevant alternatives and commit to one design.",
+    "context": {"system": "Messages can redeliver after timeout. Database supports unique constraints and transactions. External payment API accepts an idempotency key."},
+    "checks": {"contains_all": ["idempotency", "unique", "transaction"]}
+  },
+  {
+    "task_id": "deep-security-boundary",
+    "category": "DEEP",
+    "agent": "pro",
+    "policy": "DEEP",
+    "task": "Choose the safe data boundary for delegating screenshot debugging to a text-only external provider.",
+    "context": {"constraints": "Screenshots may contain tokens and personal records. Parent Codex can inspect locally and provide redacted textual observations. Provider must never receive original attachments."},
+    "checks": {"contains_all": ["parent", "redact", "text"], "excludes": ["send the screenshot"]}
+  },
+  {
+    "task_id": "deep-handoff-v2",
+    "category": "DEEP",
+    "agent": "pro",
+    "policy": "DEEP",
+    "task": "Decide whether same-role parallel Flash fan-out belongs in a prompt-only adapter change. Model the transport invariant and make a closure decision.",
+    "context": {"transport": "One pending filename per agent_type; stage rejects existing pending or claimed state; claim renames pending atomically; no handoff_id-to-child binding exists."},
+    "checks": {"contains_all": ["transport", "handoff_id", "separate"], "contains_any": ["backlog", "v2", "do not"]}
+  }
+]
