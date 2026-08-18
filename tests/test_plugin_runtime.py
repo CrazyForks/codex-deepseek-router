@@ -27,17 +27,15 @@ def test_plugin_manifest_and_hook_are_relative_and_parseable():
     assert "/Users/" not in command and "C:\\\\" not in command
 
 
-def test_repo_marketplace_points_to_github_plugin():
+def test_repo_marketplace_points_to_local_plugin_with_icon():
     marketplace = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
     assert marketplace["name"] == "deepseek-router"
     entry = marketplace["plugins"][0]
     assert entry["name"] == "codex-deepseek-router"
-    assert entry["source"] == {
-        "source": "url",
-        "url": "https://github.com/TheBlindM/codex-deepseek-router.git",
-        "ref": "main",
-    }
-    assert (ROOT / ".codex-plugin" / "plugin.json").is_file()
+    assert entry["source"] == {"source": "local", "path": "./"}
+    plugin_root = (ROOT / entry["source"]["path"]).resolve()
+    manifest = json.loads((plugin_root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert (plugin_root / manifest["interface"]["logo"]).is_file()
 
 
 def test_setup_is_plugin_first(paths, fake_codex, no_credentials):

@@ -7,9 +7,8 @@
     {
       "name": "codex-deepseek-router",
       "source": {
-        "source": "url",
-        "url": "https://github.com/TheBlindM/codex-deepseek-router.git",
-        "ref": "main"
+        "source": "local",
+        "path": "./"
       },
       "policy": {
         "installation": "AVAILABLE",
