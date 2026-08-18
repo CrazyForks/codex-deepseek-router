@@ -27,10 +27,32 @@ Codex 原生配置：两个 Agent、一个模型目录、一个明文交接 Hook
 
 ## 快速开始
 
-要求：Node.js/npm、Python 3.9+、至少启动过一次的 Codex 桌面应用，以及
-DeepSeek API Key。
+要求：Node.js/npm、Python 3.9+、至少启动过一次的 ChatGPT Desktop（Codex）
+或已经安装 Codex CLI，以及 DeepSeek API Key。
 
 ### 1. 安装 Plugin
+
+#### ChatGPT Desktop（推荐）
+
+只安装了 ChatGPT Desktop 的用户不需要在系统终端运行 `codex`。打开 Desktop
+中的 Codex，新建任务，然后直接发送：
+
+```text
+请安装这个插件：
+https://github.com/TheBlindM/codex-deepseek-router
+```
+
+Codex Agent 会检查仓库中的 `.agents/plugins/marketplace.json` 并发起安装；出现
+插件确认页面时点击 **Install plugin**。安装完成后用 `⌘Q`（macOS）或完全退出
+应用（Windows），重新打开并新建任务。
+
+仅安装 Desktop 时，系统终端出现 `command not found: codex` 属于正常情况；
+这不影响 Agent 在 Desktop 中安装插件。也可以在 Plugins 页面找到
+**DeepSeek Router** 后手动点击安装。
+
+#### Codex CLI
+
+只有在系统终端执行 `codex --version` 成功时才使用下面的命令：
 
 ```bash
 codex plugin marketplace add TheBlindM/codex-deepseek-router
@@ -42,6 +64,17 @@ codex plugin add codex-deepseek-router@deepseek-router
 
 Plugin 会同时提供管理 Skill、路由 Skill 与原生 Hook，不需要手动写入全局
 `~/.codex/hooks.json`。
+
+#### 更新或卸载
+
+| 环境 | 更新 | 卸载 |
+| --- | --- | --- |
+| ChatGPT Desktop | 把上面的 GitHub 地址再次交给 Codex Agent，并要求“更新并重新安装这个插件”；或在 Plugins 页面卸载后重新安装 | 在 Plugins → Installed 中打开插件并选择卸载 |
+| Codex CLI | 依次运行 `codex plugin marketplace upgrade deepseek-router` 和 `codex plugin add codex-deepseek-router@deepseek-router` | 运行 `codex plugin remove codex-deepseek-router@deepseek-router` |
+
+无论使用哪种方式，安装或更新后都应完全重启 Desktop/CLI，并打开新任务，
+让新的 Skill、Hook 和工具生效。更多通用说明见
+[OpenAI Plugins 文档](https://learn.chatgpt.com/docs/plugins)。
 
 ### 2. 在 Codex 中完成配置
 

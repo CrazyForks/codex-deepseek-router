@@ -29,10 +29,35 @@ manager.
 
 ## Quick start
 
-Requirements: Node.js/npm, Python 3.9+, the Codex desktop app started at least
-once, and a DeepSeek API key.
+Requirements: Node.js/npm, Python 3.9+, either ChatGPT Desktop (Codex) started
+at least once or Codex CLI installed, and a DeepSeek API key.
 
 ### 1. Install the Plugin
+
+#### ChatGPT Desktop (recommended)
+
+If you only installed ChatGPT Desktop, you do not need a global `codex` command
+in your system terminal. Open Codex in Desktop, start a new task, and send:
+
+```text
+Install this plugin:
+https://github.com/TheBlindM/codex-deepseek-router
+```
+
+The Codex agent inspects `.agents/plugins/marketplace.json` in the repository
+and starts the installation. When the plugin confirmation page appears, select
+**Install plugin**. After installation, fully quit the app with `Cmd-Q` on
+macOS (or exit it completely on Windows), reopen it, and start a new task.
+
+Seeing `command not found: codex` in a system terminal is expected when only
+Desktop is installed; it does not prevent the Desktop agent from installing
+the plugin. You can also find **DeepSeek Router** in the Plugins page and
+install it manually.
+
+#### Codex CLI
+
+Use these commands only when `codex --version` succeeds in your system
+terminal:
 
 ```bash
 codex plugin marketplace add TheBlindM/codex-deepseek-router
@@ -44,6 +69,18 @@ codex plugin add codex-deepseek-router@deepseek-router
 
 The Plugin provides the management Skill, routing Skill, and native Hook. It
 does not write a Hook into `~/.codex/hooks.json`.
+
+#### Update or uninstall
+
+| Environment | Update | Uninstall |
+| --- | --- | --- |
+| ChatGPT Desktop | Give the GitHub URL above to the Codex agent again and ask it to update and reinstall the plugin, or uninstall and reinstall it from the Plugins page | Open the plugin under Plugins → Installed and select uninstall |
+| Codex CLI | Run `codex plugin marketplace upgrade deepseek-router`, then `codex plugin add codex-deepseek-router@deepseek-router` | Run `codex plugin remove codex-deepseek-router@deepseek-router` |
+
+After installation or an update, fully restart Desktop/CLI and open a new task
+so the new skills, hooks, and tools are loaded. See the
+[OpenAI Plugins documentation](https://learn.chatgpt.com/docs/plugins) for the
+general plugin workflow.
 
 ### 2. Configure it inside Codex
 
