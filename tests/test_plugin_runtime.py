@@ -69,6 +69,9 @@ def test_router_uses_explicit_mode_and_complexity_metadata():
 
 def test_context_sanitizer_withholds_attachments():
     assert "withheld" in sanitize_context({"image": "/tmp/secret.png"})
+    assert "withheld" in sanitize_context({"metadata": {"image": "base64-data"}})
+    shared = {"value": "ok"}
+    assert sanitize_context([shared, shared]).count("value") == 2
     rendered = TaskContext("inspect", {"a.py": "x"}, visual_context={"observations": ["button"]}).render("flash")
     assert "parent Codex" in rendered
     assert "original image" in rendered
@@ -117,3 +120,31 @@ def test_hook_invalid_json_fails_open(tmp_path):
     assert completed.returncode == 0
     payload = json.loads(completed.stdout)
     assert payload["hookSpecificOutput"]["additionalContext"] == ""
+
+
+def test_hook_non_string_agent_type_fails_open(tmp_path):
+    script = ROOT / "hooks" / "plaintext_handoff.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--mode", "hook", "--state-directory", str(tmp_path)],
+        input=json.dumps({"hook_event_name": "SubagentStart", "agent_type": []}),
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["hookSpecificOutput"]["additionalContext"] == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"hooks": []},
+        {"hooks": {"SubagentStart": [None]}},
+    ],
+)
+def test_malformed_plugin_hook_shape_is_unavailable(tmp_path, payload):
+    class PluginPaths:
+        plugin_hooks_config = tmp_path / "hooks.json"
+
+    PluginPaths.plugin_hooks_config.write_text(json.dumps(payload))
+    assert manager.plugin_hook_available(PluginPaths()) is False

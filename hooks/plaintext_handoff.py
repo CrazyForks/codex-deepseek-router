@@ -671,21 +671,33 @@ def run_target_hook_locked(root: pathlib.Path, hook_input: Dict[str, Any]) -> No
 def run_hook(root: pathlib.Path) -> None:
     try:
         hook_input = json.load(sys.stdin)
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
         fail_open(f"SubagentStart hook input was invalid JSON: {error}")
         return
     if not isinstance(hook_input, dict):
         fail_open("SubagentStart hook input must be a JSON object.")
         return
-    if (
-        hook_input.get("hook_event_name") != "SubagentStart"
-        or hook_input.get("agent_type") not in VALID_AGENTS
-    ):
+    agent_type = hook_input.get("agent_type")
+    if not isinstance(agent_type, str):
+        fail_open("SubagentStart hook input must contain a string agent_type.")
+        return
+    if hook_input.get("hook_event_name") != "SubagentStart" or agent_type not in VALID_AGENTS:
         return
     try:
-        with state_lock(root, hook_input["agent_type"]):
+        with state_lock(root, agent_type):
             run_target_hook_locked(root, hook_input)
-    except (HandoffBusy, HandoffMalformed, HandoffExpired, HandoffMissing, HandoffLocked, OSError, ValueError) as error:
+    except (
+        HandoffBusy,
+        HandoffMalformed,
+        HandoffExpired,
+        HandoffMissing,
+        HandoffLocked,
+        EnvelopeError,
+        OSError,
+        UnicodeDecodeError,
+        ValueError,
+        TypeError,
+    ) as error:
         fail_open(str(error))
 
 

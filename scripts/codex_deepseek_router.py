@@ -1380,23 +1380,35 @@ def plugin_hook_config(paths: Paths) -> Dict[str, Any]:
 
 
 def plugin_hook_available(paths: Paths) -> bool:
-    config = plugin_hook_config(paths)
-    entries = (config.get("hooks") or {}).get("SubagentStart") if config else None
-    if not isinstance(entries, list) or len(entries) != 1:
+    definition = plugin_hook_definition(paths)
+    if definition is None:
         return False
-    entry = entries[0]
-    handlers = entry.get("hooks") if isinstance(entry, dict) else None
-    if entry.get("matcher") != "^(deepseek_flash|deepseek_pro)$" or not isinstance(handlers, list):
-        return False
-    if len(handlers) != 1 or not isinstance(handlers[0], dict):
-        return False
-    command = handlers[0].get("command")
+    entry, handler = definition
+    command = handler.get("command")
     return (
-        handlers[0].get("type") == "command"
+        handler.get("type") == "command"
         and isinstance(command, str)
         and "PLUGIN_ROOT" in command
-        and handlers[0].get("timeout") == 10
+        and handler.get("timeout") == 10
     )
+
+
+def plugin_hook_definition(paths: Paths) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """Return the single Plugin Hook definition when its JSON shape is valid."""
+    config = plugin_hook_config(paths)
+    hooks = config.get("hooks") if isinstance(config, dict) else None
+    if not isinstance(hooks, dict):
+        return None
+    entries = hooks.get("SubagentStart")
+    if not isinstance(entries, list) or len(entries) != 1:
+        return None
+    entry = entries[0]
+    if not isinstance(entry, dict) or entry.get("matcher") != "^(deepseek_flash|deepseek_pro)$":
+        return None
+    handlers = entry.get("hooks")
+    if not isinstance(handlers, list) or len(handlers) != 1 or not isinstance(handlers[0], dict):
+        return None
+    return entry, handlers[0]
 
 
 def _matcher_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
@@ -1708,12 +1720,10 @@ def hook_trusted(paths: Paths, codex_bin: Optional[str] = None) -> bool:
     if not runtime_entry or runtime_entry.get("errors"):
         return False
 
-    config = plugin_hook_config(paths)
-    entries = (config.get("hooks") or {}).get("SubagentStart") if config else None
-    if not isinstance(entries, list) or len(entries) != 1:
+    definition = plugin_hook_definition(paths)
+    if definition is None:
         return False
-    group = entries[0]
-    handler = group["hooks"][0]
+    group, handler = definition
     expected_command = handler.get("commandWindows") if platform_name() == "windows" else handler.get("command")
     expanded_command = str(expected_command or "").replace("$PLUGIN_ROOT", str(paths.plugin_root))
     try:

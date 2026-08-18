@@ -53,17 +53,34 @@ def _bounded(value: str, budget: int) -> str:
     return value[:head] + "\n\n[context truncated at the model budget]\n\n" + value[-(budget - head - 44):]
 
 
+_UNSUPPORTED_KEYS = {"image", "images", "binary", "attachment", "screenshot", "video", "pdf"}
+
+
 def sanitize_context(value: Any) -> str:
-    """Convert attachments/binary markers into a parent-only text warning."""
+    """Recursively remove original attachments before provider transmission."""
+    return _sanitize_context(value, set())
+
+
+def _sanitize_context(value: Any, seen: set[int]) -> str:
     if isinstance(value, str):
         return value
-    if isinstance(value, Mapping):
-        unsupported = [key for key in value if str(key).lower() in {"image", "images", "binary", "attachment", "screenshot", "video", "pdf"}]
-        if unsupported:
-            return "Unsupported original attachments were withheld by the parent Codex: " + ", ".join(map(str, unsupported))
-        return str(dict(value))
-    if isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray)):
-        return "\n".join(sanitize_context(item) for item in value)
     if isinstance(value, (bytes, bytearray)):
         return "Binary content was withheld by the parent Codex."
-    return str(value)
+    identity = id(value)
+    tracked = isinstance(value, (Mapping, Iterable))
+    if tracked:
+        if identity in seen:
+            return "Cyclic context content was withheld by the parent Codex."
+        seen.add(identity)
+    try:
+        if isinstance(value, Mapping):
+            unsupported = [key for key in value if str(key).lower() in _UNSUPPORTED_KEYS]
+            if unsupported:
+                return "Unsupported original attachments were withheld by the parent Codex: " + ", ".join(map(str, unsupported))
+            return str({str(key): _sanitize_context(item, seen) for key, item in value.items()})
+        if isinstance(value, Iterable):
+            return "\n".join(_sanitize_context(item, seen) for item in value)
+        return str(value)
+    finally:
+        if tracked:
+            seen.discard(identity)
