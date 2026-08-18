@@ -115,6 +115,11 @@ def test_flash_is_read_only_and_pro_owns_implementation():
     assert "Never modify workspace files" in flash
     assert "read-only" in flash.split("developer_instructions")[0]
     assert "You are read-only" not in pro
+    assert "For investigation:" not in pro
+    assert "For implementation:" not in pro
+    assert "Dynamic Policy Execution" in flash
+    assert "Dynamic Policy Execution" in pro
+    assert "EVIDENCE PACKET" in pro
     # The repo-shipped portable template carries the same contract.
     template = (
         Path(__file__).resolve().parents[1]
