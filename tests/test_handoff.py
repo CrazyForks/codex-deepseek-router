@@ -133,7 +133,7 @@ def test_stage_publishes_pending(handoff_dir):
     assert payload["staged"] is True
     pending = handoff.pending_path(handoff_dir, FLASH)
     assert pending.is_file()
-    stored = json.loads(pending.read_text())
+    stored = json.loads(pending.read_text(encoding="utf-8"))
     assert stored["assignment"] == "find it"
     assert stored["policy"] == "FAST"
     assert stored["modality"] == "TEXT_ONLY"
@@ -167,7 +167,7 @@ def test_expired_pending_can_be_replaced(handoff_dir):
     payload = handoff.stage(
         handoff_dir, agent_type=FLASH, assignment="fresh", policy="FAST", modality="TEXT_ONLY"
     )
-    stored = json.loads(handoff.pending_path(handoff_dir, FLASH).read_text())
+    stored = json.loads(handoff.pending_path(handoff_dir, FLASH).read_text(encoding="utf-8"))
     assert stored["handoff_id"] == payload["handoff_id"]
     assert stored["assignment"] == "fresh"
 
@@ -191,7 +191,7 @@ def test_stage_with_packets(handoff_dir):
         visual_context=visual,
         evidence_packet=evidence,
     )
-    stored = json.loads(handoff.pending_path(handoff_dir, FLASH).read_text())
+    stored = json.loads(handoff.pending_path(handoff_dir, FLASH).read_text(encoding="utf-8"))
     assert stored["visual_context"] == visual
     assert stored["evidence_packet"] == evidence
 
@@ -474,7 +474,7 @@ def test_cli_json_envelope_mode(handoff_dir):
         stdin_text=json.dumps(envelope),
     )
     assert proc.returncode == 0
-    stored = json.loads(handoff.pending_path(handoff_dir, PRO).read_text())
+    stored = json.loads(handoff.pending_path(handoff_dir, PRO).read_text(encoding="utf-8"))
     assert stored["policy"] == "DEEP"
     assert stored["visual_context"]["source_type"] == "screenshot"
 
@@ -497,8 +497,8 @@ def test_python_and_powershell_protocol_parity():
     import re
 
     package = Path(__file__).resolve().parents[1]
-    py_source = (package / "hooks" / "plaintext_handoff.py").read_text()
-    ps1_source = (package / "hooks" / "plaintext-handoff.ps1").read_text()
+    py_source = (package / "hooks" / "plaintext_handoff.py").read_text(encoding="utf-8")
+    ps1_source = (package / "hooks" / "plaintext-handoff.ps1").read_text(encoding="utf-8")
 
     for role in ("deepseek_flash", "deepseek_pro"):
         assert role in py_source and role in ps1_source

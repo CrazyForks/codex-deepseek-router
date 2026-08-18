@@ -190,7 +190,7 @@ def _check_schema(schema, instance, path="$"):
 
 
 def test_assignment_envelope_fixture_matches_schema():
-    schema = json.loads((SCHEMAS / "assignment-envelope.schema.json").read_text())
+    schema = json.loads((SCHEMAS / "assignment-envelope.schema.json").read_text(encoding="utf-8"))
     envelope = handoff.new_envelope(
         agent_type="deepseek_pro",
         assignment="trace the race",
@@ -202,15 +202,15 @@ def test_assignment_envelope_fixture_matches_schema():
 
 
 def test_visual_context_fixture_matches_schema():
-    schema = json.loads((SCHEMAS / "visual-context.schema.json").read_text())
-    fixture = json.loads((FIXTURES / "visual-context-example.json").read_text())
+    schema = json.loads((SCHEMAS / "visual-context.schema.json").read_text(encoding="utf-8"))
+    fixture = json.loads((FIXTURES / "visual-context-example.json").read_text(encoding="utf-8"))
     _check_schema(schema, fixture)
     assert fixture["source_visibility"] == "parent_only"
 
 
 def test_evidence_packet_fixture_matches_schema():
-    schema = json.loads((SCHEMAS / "evidence-packet.schema.json").read_text())
-    fixture = json.loads((FIXTURES / "evidence-packet-example.json").read_text())
+    schema = json.loads((SCHEMAS / "evidence-packet.schema.json").read_text(encoding="utf-8"))
+    fixture = json.loads((FIXTURES / "evidence-packet-example.json").read_text(encoding="utf-8"))
     _check_schema(schema, fixture)
 
 
@@ -220,7 +220,7 @@ def test_schema_files_are_valid_json():
         "visual-context.schema.json",
         "evidence-packet.schema.json",
     ):
-        loaded = json.loads((SCHEMAS / name).read_text())
+        loaded = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
         assert loaded["$schema"].startswith("http://json-schema.org/draft-07")
 
 
@@ -230,7 +230,7 @@ def test_schema_files_are_valid_json():
 
 
 def test_runtime_skill_documents_the_dispatch_steps():
-    text = (PACKAGE / "skills" / "use-deepseek-router" / "SKILL.md").read_text()
+    text = (PACKAGE / "skills" / "use-deepseek-router" / "SKILL.md").read_text(encoding="utf-8")
     for marker in (
         "TEXT_ONLY",
         "VISION_TRANSLATABLE",
@@ -254,7 +254,7 @@ def test_skills_require_user_facing_language_matching():
         PACKAGE / "skills" / "use-deepseek-router" / "SKILL.md",
     )
     for path in skill_paths:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "same language as the user's latest request" in text, path
 
 
@@ -272,7 +272,7 @@ EVAL_FILES = {
 
 def test_eval_datasets_are_complete_and_consistent():
     for filename, (group, expected_size, expected_agent) in EVAL_FILES.items():
-        payload = json.loads((FIXTURES / filename).read_text())
+        payload = json.loads((FIXTURES / filename).read_text(encoding="utf-8"))
         assert payload["group"] == group
         tasks = payload["tasks"]
         assert len(tasks) == expected_size, filename
@@ -291,7 +291,7 @@ def test_eval_datasets_are_complete_and_consistent():
 
 
 def test_multimodal_dataset_never_routes_visual_critical_to_deepseek():
-    payload = json.loads((FIXTURES / "eval-multimodal.json").read_text())
+    payload = json.loads((FIXTURES / "eval-multimodal.json").read_text(encoding="utf-8"))
     for task in payload["tasks"]:
         if task["expected_modality"] == "VISION_CRITICAL":
             assert task["expected_agent"] == "NONE", task["id"]

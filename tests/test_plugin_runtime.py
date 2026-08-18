@@ -17,18 +17,18 @@ import codex_deepseek_router as manager
 
 
 def test_plugin_manifest_and_hook_are_relative_and_parseable():
-    manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
+    manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert manifest["name"] == "codex-deepseek-router"
     assert manifest["skills"] == "./skills/"
     assert "hooks" not in manifest
-    hook = json.loads((ROOT / "hooks" / "hooks.json").read_text())
+    hook = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     command = hook["hooks"]["SubagentStart"][0]["hooks"][0]["command"]
     assert "$PLUGIN_ROOT" in command
     assert "/Users/" not in command and "C:\\\\" not in command
 
 
 def test_repo_marketplace_points_to_github_plugin():
-    marketplace = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text())
+    marketplace = json.loads((ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
     assert marketplace["name"] == "deepseek-router"
     entry = marketplace["plugins"][0]
     assert entry["name"] == "codex-deepseek-router"
@@ -56,7 +56,7 @@ def test_legacy_migration_removes_only_owned_entry(paths, fake_codex, no_credent
     paths.hooks_config.write_text(json.dumps(old))
     result = manager.migrate_legacy(paths)
     assert result["status"] == "migrated"
-    remaining = json.loads(paths.hooks_config.read_text())
+    remaining = json.loads(paths.hooks_config.read_text(encoding="utf-8"))
     assert "SubagentStart" not in remaining["hooks"]
     assert "UserPromptSubmit" in remaining["hooks"]
 

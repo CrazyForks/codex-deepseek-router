@@ -271,7 +271,11 @@ def _runtime_hook_metadata(paths, **overrides):
         "eventName": "subagentStart",
         "handlerType": "command",
         "matcher": group["matcher"],
-        "command": handler["command"],
+        "command": (
+            handler.get("commandWindows")
+            if manager.platform_name() == "windows"
+            else handler["command"]
+        ),
         "sourcePath": str(paths.plugin_hooks_config),
         "enabled": True,
         "currentHash": "sha256:test",

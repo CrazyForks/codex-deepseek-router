@@ -43,7 +43,7 @@ def _scan_targets():
 def test_repository_contains_no_real_api_keys():
     offenders = []
     for path in _scan_targets():
-        text = path.read_text(errors="ignore")
+        text = path.read_text(encoding="utf-8", errors="ignore")
         for pattern in SUSPICIOUS_PATTERNS:
             match = pattern.search(text)
             if match:
@@ -92,7 +92,7 @@ def test_macos_smoke_env_does_not_redundantly_decrypt_key(paths, monkeypatch):
 def test_manifest_never_contains_key(paths, fake_codex, no_credentials, monkeypatch):
     monkeypatch.setattr(manager, "read_credential_key", lambda: "sk-test-secret")
     manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
-    assert "sk-" not in paths.manifest.read_text()
+    assert "sk-" not in paths.manifest.read_text(encoding="utf-8")
 
 
 def test_handoff_cli_has_no_assignment_argv_option():
