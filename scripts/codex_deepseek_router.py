@@ -1729,7 +1729,15 @@ def _query_codex_hooks(paths: Paths, codex_bin: str) -> Optional[Dict[str, Any]]
 
 
 def hook_trusted(paths: Paths, codex_bin: Optional[str] = None) -> bool:
-    """True only when Codex reports the Plugin Hook source as trusted."""
+    """True only when Codex reports the Plugin Hook source as trusted.
+
+    Codex may discover a Plugin from its managed cache rather than from the
+    checkout containing this manager script.  In that case ``hooks/list``
+    reports the cached source path and the Plugin ID, while the hook contract
+    (event, matcher and command) remains the same.  Trust is therefore keyed
+    by Codex's canonical Plugin identity plus the exact managed hook shape,
+    not by the manager checkout path alone.
+    """
     if not codex_bin:
         return False
     runtime_entry = _query_codex_hooks(paths, codex_bin)
@@ -1747,6 +1755,14 @@ def hook_trusted(paths: Paths, codex_bin: Optional[str] = None) -> bool:
     except (OSError, RuntimeError):
         expected_source = paths.plugin_hooks_config.absolute()
 
+    expected_plugin_name = None
+    try:
+        manifest = json.loads(paths.plugin_manifest.read_text(encoding="utf-8"))
+        if isinstance(manifest, dict) and isinstance(manifest.get("name"), str):
+            expected_plugin_name = manifest["name"]
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        pass
+
     matches: List[Dict[str, Any]] = []
     for hook in runtime_entry.get("hooks") or []:
         if not isinstance(hook, dict):
@@ -1755,8 +1771,15 @@ def hook_trusted(paths: Paths, codex_bin: Optional[str] = None) -> bool:
             source_matches = Path(hook.get("sourcePath", "")).resolve() == expected_source
         except (OSError, RuntimeError, TypeError):
             source_matches = False
+        plugin_id = hook.get("pluginId")
+        plugin_name = plugin_id.split("@", 1)[0] if isinstance(plugin_id, str) else None
+        plugin_identity_matches = (
+            hook.get("source") == "plugin"
+            and expected_plugin_name is not None
+            and plugin_name == expected_plugin_name
+        )
         if (
-            source_matches
+            (source_matches or plugin_identity_matches)
             and hook.get("eventName") == "subagentStart"
             and hook.get("handlerType") == "command"
             and hook.get("matcher") == group["matcher"]
@@ -2584,6 +2607,12 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
         ) from exc
     if proc.returncode != 0:
         stderr = proc.stderr[-1200:]
+        combined_output = f"{proc.stderr}\n{proc.stdout}".lower()
+        if "selected model is at capacity" in combined_output:
+            raise ManagerError(
+                "parent_model_capacity",
+                "The configured parent model is currently at capacity; retry the Native smoke test later or select an available parent model.",
+            )
         if "hook" in stderr.lower() and not hook_trusted(paths, codex_bin):
             raise ManagerError(
                 "hook_untrusted",

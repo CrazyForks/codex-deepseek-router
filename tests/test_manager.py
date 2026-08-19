@@ -310,6 +310,41 @@ def test_hook_trusted_uses_codex_runtime_metadata(paths, fake_codex, monkeypatch
     assert manager.hook_trusted(paths, fake_codex) is True
 
 
+def test_hook_trusted_accepts_trusted_managed_plugin_cache(paths, fake_codex, monkeypatch):
+    """Desktop reports the installed Plugin cache path, not this checkout."""
+    cached = _runtime_hook_metadata(
+        paths,
+        sourcePath="/Users/test/.codex/plugins/cache/deepseek-router/0.2.0/hooks/hooks.json",
+        source="plugin",
+        pluginId="codex-deepseek-router@deepseek-router",
+    )
+    monkeypatch.setattr(
+        manager,
+        "_query_codex_hooks",
+        lambda paths, codex_bin: {"hooks": [cached], "warnings": [], "errors": []},
+        raising=False,
+    )
+
+    assert manager.hook_trusted(paths, fake_codex) is True
+
+
+def test_hook_trusted_rejects_trusted_foreign_plugin_cache(paths, fake_codex, monkeypatch):
+    foreign = _runtime_hook_metadata(
+        paths,
+        sourcePath="/Users/test/.codex/plugins/cache/foreign/0.1.0/hooks/hooks.json",
+        source="plugin",
+        pluginId="foreign-plugin@marketplace",
+    )
+    monkeypatch.setattr(
+        manager,
+        "_query_codex_hooks",
+        lambda paths, codex_bin: {"hooks": [foreign], "warnings": [], "errors": []},
+        raising=False,
+    )
+
+    assert manager.hook_trusted(paths, fake_codex) is False
+
+
 @pytest.mark.parametrize("trust_status", ["untrusted", "modified", None])
 def test_hook_trusted_fails_closed_for_unapproved_hash(
     paths, fake_codex, monkeypatch, trust_status
