@@ -1174,6 +1174,9 @@ def managed_assets(paths: Paths) -> Dict[str, ManagedAsset]:
         # Hook itself always executes the Plugin-relative copies.
         "handoff_script_py": ManagedAsset(paths.hooks_install_dir / "plaintext_handoff.py"),
         "handoff_script_ps1": ManagedAsset(paths.hooks_install_dir / "plaintext-handoff.ps1"),
+        "handoff_reasoning": ManagedAsset(
+            paths.hooks_install_dir / "runtime" / "reasoning.py"
+        ),
     }
 
 
@@ -1523,15 +1526,27 @@ def merge_hook_config(existing: Dict[str, Any], ours: Dict[str, Any], paths: Pat
 
 
 def install_hook_files(paths: Paths, manifest: Dict[str, Any]) -> None:
-    """Copy the handoff scripts into the codex home. Foreign files are conflicts."""
+    """Copy the handoff helpers into the Codex home. Foreign files are conflicts."""
     source_dir = package_root() / "hooks"
     paths.hooks_install_dir.mkdir(parents=True, exist_ok=True)
-    for name, hash_key in (
-        ("plaintext_handoff.py", "handoff_script_py"),
-        ("plaintext-handoff.ps1", "handoff_script_ps1"),
-    ):
-        source = source_dir / name
-        target = paths.hooks_install_dir / name
+    install_specs = (
+        (
+            source_dir / "plaintext_handoff.py",
+            paths.hooks_install_dir / "plaintext_handoff.py",
+            "handoff_script_py",
+        ),
+        (
+            source_dir / "plaintext-handoff.ps1",
+            paths.hooks_install_dir / "plaintext-handoff.ps1",
+            "handoff_script_ps1",
+        ),
+        (
+            package_root() / "runtime" / "reasoning.py",
+            paths.hooks_install_dir / "runtime" / "reasoning.py",
+            "handoff_reasoning",
+        ),
+    )
+    for source, target, hash_key in install_specs:
         if not source.is_file():
             continue
         data = source.read_bytes()
@@ -1826,7 +1841,11 @@ def runtime_assets_valid(paths: Paths, manifest: Dict[str, Any]) -> bool:
 
 
 def hook_files_installed(paths: Paths, manifest: Dict[str, Any]) -> bool:
-    return plugin_hook_available(paths)
+    helper_keys = ("handoff_script_py", "handoff_script_ps1", "handoff_reasoning")
+    assets = managed_assets(paths)
+    return plugin_hook_available(paths) and all(
+        assets[key].path.is_file() for key in helper_keys
+    )
 
 
 def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[str, bool], bool]:
@@ -1838,7 +1857,7 @@ def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[s
     handoff_paths = {
         key: path
         for key, path in managed_asset_paths(paths).items()
-        if key.startswith("handoff_script_")
+        if key.startswith("handoff_")
     }
     before = {
         key: sha256_file(path) if path.is_file() else None
@@ -1915,7 +1934,7 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
     }
     legacy = legacy_hook_status(paths)
     plugin = plugin_status(paths)
-    hooks_installed = plugin["manifest_valid"] and plugin["hook_available"]
+    hooks_installed = hook_files_installed(paths, manifest)
     assets_valid = runtime_assets_valid(paths, manifest)
     trusted = hook_trusted(paths, codex_bin)
     errors: List[str] = []
@@ -2275,10 +2294,11 @@ def uninstall(paths: Paths, remove_credential: bool) -> Dict[str, Any]:
         # The manager only removes its global Agents/catalog and state.
         for target in (assets["flash_agent"], assets["pro_agent"]):
             target.unlink(missing_ok=True)
-        for target in (assets["handoff_script_py"], assets["handoff_script_ps1"]):
-            target.unlink(missing_ok=True)
-        if paths.hooks_install_dir.is_dir() and not any(paths.hooks_install_dir.iterdir()):
-            paths.hooks_install_dir.rmdir()
+        for key in ("handoff_script_py", "handoff_script_ps1", "handoff_reasoning"):
+            assets[key].unlink(missing_ok=True)
+        for directory in (paths.hooks_install_dir / "runtime", paths.hooks_install_dir):
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
         catalog_removed = False
         catalog_restored = False
         if paths.catalog.is_file():

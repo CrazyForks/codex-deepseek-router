@@ -21,6 +21,7 @@ Start with `status --json` — it is read-only and safe.
 |---|---|---|
 | `hook_review_required` in setup/status | Plugin Hook not reviewed yet | restart/open a new task for native review; use CLI `/hooks` only as fallback |
 | `hook_untrusted` from `test` | same | review the Plugin Hook, then run `test` again |
+| staging reports `No module named 'runtime'` | Installed staging helper is missing its reasoning sidecar | run `repair --json` (or reinstall/update the Plugin), restart Codex, then re-stage |
 | child reports no assignment | stage failed or was skipped | never spawn after a failed stage; re-stage, then spawn |
 | `handoff_conflict` / stage exit 3 | pending or quarantined state for that role | let it expire, or inspect `~/.codex/deepseek-router/handoff/` and clear deliberately |
 | `handoff_missing` at child start | assignment expired (TTL 300 s) | re-stage immediately before spawning |

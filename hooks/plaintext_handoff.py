@@ -30,7 +30,15 @@ import sys
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[1]
+SCRIPT_ROOT = pathlib.Path(__file__).resolve().parent
+PACKAGE_ROOT = next(
+    (
+        candidate
+        for candidate in (SCRIPT_ROOT.parent, SCRIPT_ROOT)
+        if (candidate / "runtime" / "reasoning.py").is_file()
+    ),
+    SCRIPT_ROOT.parent,
+)
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 

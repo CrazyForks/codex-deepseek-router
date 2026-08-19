@@ -6,6 +6,7 @@ Lifecycle tests run against a fake codex home and never touch the real
 
 import json
 import sqlite3
+import subprocess
 import sys
 import threading
 import uuid
@@ -700,6 +701,40 @@ def test_repair_refreshes_previous_managed_handoff_runtime(
     assert target.read_bytes() == (
         Path(manager.__file__).resolve().parents[1] / "hooks" / "plaintext_handoff.py"
     ).read_bytes()
+
+
+def test_installed_staging_helper_includes_reasoning_runtime(paths):
+    manager.install_hook_files(paths, {})
+
+    script = paths.hooks_install_dir / "plaintext_handoff.py"
+    reasoning = paths.hooks_install_dir / "runtime" / "reasoning.py"
+    assert script.is_file()
+    assert reasoning.is_file()
+
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--mode",
+            "stage",
+            "--agent-type",
+            "deepseek_pro",
+            "--policy",
+            "REACT",
+            "--modality",
+            "TEXT_ONLY",
+            "--state-directory",
+            str(paths.handoff_dir),
+        ],
+        input="bounded staging probe",
+        text=True,
+        capture_output=True,
+    )
+
+    assert process.returncode == 0, process.stderr
+    payload = json.loads(process.stdout)
+    assert payload["staged"] is True
+    assert Path(payload["pending_path"]).is_file()
 
 
 @pytest.mark.skip(reason="Legacy Hook assets are migrated explicitly, not repaired")
