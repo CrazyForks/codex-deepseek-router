@@ -114,9 +114,13 @@ tool observations. Native Hook delivery remains conditionally escalated by the
 Flash SPEC contract.
 
 The 2026-08-18 smoke measurements and their limitations are recorded in
-`eval/results/2026-08-18-summary.md`. The Pro service produced seven network
-failures in twelve requests, so the three-task live Evidence Packet comparison
-and all P2 experiments remain gated.
+`eval/results/2026-08-18-summary.md`. The reported seven failures in twelve Pro
+requests came from the standalone `run_execution_eval.py --live` HTTP harness,
+which calls `DeepSeekClient(...).complete()` directly. They are not a failure
+rate for the Codex Native Agent path and must not be used to change Native Agent
+timeouts or to claim that Native Pro is unavailable. The standalone result is
+still gated for API-level follow-up until timeout/network telemetry is separated;
+Native release acceptance requires a separate Hook-backed Codex smoke and trace.
 
 ## Multimodal truth boundary (Epic 20)
 

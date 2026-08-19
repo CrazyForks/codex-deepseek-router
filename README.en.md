@@ -156,6 +156,20 @@ behavioral findings while preserving Codex-native orchestration. DSH runtime
 system/tool-surface rewriting is not emulated where Codex exposes no equivalent
 control; no weak/mixed secondary router or same-role fan-out is introduced.
 
+### Native acceptance and API ablation are separate paths
+
+| Path | Entry point | Proves | Does not prove |
+| --- | --- | --- | --- |
+| Native Codex | `stage → SubagentStart hook → spawn_agent → callback`, or `scripts/codex_deepseek_router.py test --json` | Native child routing, Hook delivery, callback, thread metadata, markers, and real tool behavior | It is not the standalone prompt A/B harness |
+| Standalone API eval | `scripts/run_execution_eval.py --live` | Reasoning Adapter prompt ablations, public token usage, latency, and answer rubric | It has no native tool/callback trace and is not a Native Pro failure rate |
+
+`run_execution_eval.py --live` directly calls `DeepSeekClient(...).complete()` so
+the A/B/C prompts can be controlled. Its timeout and retry settings belong only
+to the fallback client; they do not configure or represent the Codex Native Agent
+runtime. `NETWORK` or timeout results from this path must therefore be labeled as
+standalone eval evidence, not as a Native Pro service failure. Release acceptance
+uses the Native Codex smoke after the Hook has been reviewed and trusted.
+
 ## Installed components and safety boundaries
 
 The manager:

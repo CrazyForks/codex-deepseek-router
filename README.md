@@ -144,6 +144,19 @@ Prompt 一致性，不假装拥有 Native 子 Agent 的工具环境；其 Flash 
 system/tool-surface 重写，不做伪实现，也不引入 DSH runtime、weak/mixed 二级
 Router 或同角色 fan-out 状态机。
 
+### Native 验收与 API 消融评测是两条路径
+
+| 路径 | 入口 | 能证明什么 | 不能证明什么 |
+| --- | --- | --- | --- |
+| Native Codex | `stage → SubagentStart Hook → spawn_agent → callback`，或 `scripts/codex_deepseek_router.py test --json` | 原生子 Agent 路由、Hook、callback、线程元数据、marker，以及真实工具行为 | 不等同于 standalone prompt A/B |
+| Standalone API eval | `scripts/run_execution_eval.py --live` | Reasoning Adapter 的 prompt 消融、公开 token、延迟和答案 rubric | 没有 Native tool/callback trace，不代表 Native Pro 的失败率 |
+
+`run_execution_eval.py --live` 为了控制 A/B/C prompt，会直接调用
+`DeepSeekClient(...).complete()`；它使用的是 fallback client 自己的 timeout 和
+retry 设置，不会修改或代表 Codex Native Agent runtime。该路径中的 `NETWORK`
+或 timeout 结果必须标记为 standalone eval 证据，不能直接写成 Native Pro
+服务故障。最终发布验收以 Hook 已 Review/Trust 后的 Native Codex smoke 为准。
+
 ## 安装内容与安全边界
 
 管理器会：
