@@ -1,0 +1,44 @@
+[
+  {
+    "task_id": "visual-black-hole",
+    "category": "QUALITY_SENSITIVE",
+    "modality": "VISION_CRITICAL",
+    "prompt": "Create a single-file HTML/JS high-precision interactive 3D black-hole simulator with clear gravitational lensing, a bright rotating accretion disk, a distinct black-hole shadow, mouse camera control, continuous animation, obvious left/right Doppler brightness asymmetry, no local dependencies, and a striking black-hole visual identity.",
+    "acceptance_criteria": [
+      "single HTML/JS artifact runs in a modern browser",
+      "mouse interaction works and animation remains continuous",
+      "black-hole shadow is visually clear",
+      "gravitational lensing is obvious and the rear disk is visibly folded around the shadow",
+      "the accretion disk reads as a disk rather than merely a glowing torus",
+      "left/right Doppler brightness asymmetry is clearly visible",
+      "the overall result is recognizably a striking black-hole simulation"
+    ],
+    "verification_owner": "SHARED"
+  },
+  {
+    "task_id": "responsive-ui",
+    "category": "QUALITY_SENSITIVE",
+    "modality": "VISION_CRITICAL",
+    "prompt": "Build a responsive dashboard UI for a monitoring product. Establish clear visual hierarchy, modern 1080p/2K layouts, responsive behavior, readable labels, and obvious hover, loading, empty, error, and selected states.",
+    "acceptance_criteria": [
+      "layout remains usable at 1080p and 2K widths",
+      "primary information hierarchy is immediately readable",
+      "labels do not overlap or clip",
+      "hover, loading, empty, error, and selected states are visibly distinct"
+    ],
+    "verification_owner": "SHARED"
+  },
+  {
+    "task_id": "interactive-canvas",
+    "category": "QUALITY_SENSITIVE",
+    "modality": "VISION_CRITICAL",
+    "prompt": "Create an interactive canvas/WebGL animation with strong visual impact, continuous motion, mouse or touch interaction, and reasonable runtime performance.",
+    "acceptance_criteria": [
+      "animation remains continuous without fatal runtime errors",
+      "mouse or touch interaction has a visible effect",
+      "the main visual effect is clear at a glance",
+      "the implementation avoids unnecessary frame-time work"
+    ],
+    "verification_owner": "SHARED"
+  }
+]

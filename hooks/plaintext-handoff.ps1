@@ -135,9 +135,9 @@ function Get-ReasoningContext([string]$Agent, [string]$ReasoningPolicy) {
         }
         "REACT" {
             if ($Agent -eq "deepseek_flash") {
-                "Locate the exact change and its constraints, then return a precise read-only proposal with affected files, patch or diff, and suggested tests. Do not modify the workspace or claim that a proposed edit or verification was executed."
+                "Locate the exact change and its constraints, map the assignment's acceptance criteria, then return a precise read-only proposal with affected files, patch or diff, suggested tests, and a clear split between child-verifiable and parent-owned criteria. Do not modify the workspace or claim that a proposed edit or verification was executed."
             } else {
-                "Understand only the context needed for the smallest coherent change, implement it, run the minimum relevant verification, fix any resulting failure, and stop. Do not widen scope or build frameworks, scaffolding, or ceremony the parent did not request."
+                "Understand the requested result and only the context needed to implement the smallest coherent solution that can satisfy the assignment. Implement it, run functional verification, check the explicit acceptance criteria within your capability, report parent-owned criteria as unverified, fix resulting failures, and stop once child-verifiable criteria are satisfied and remaining parent-owned criteria are surfaced. Do not widen scope or build frameworks, scaffolding, or ceremony the parent did not request."
             }
         }
         "SPEC" {
@@ -159,7 +159,13 @@ function Get-ReasoningContext([string]$Agent, [string]$ReasoningPolicy) {
     }
     $stopCondition = switch ($ReasoningPolicy) {
         "FAST" { "Stop when direct evidence supports the answer and no unresolved issue can materially change it." }
-        "REACT" { "Stop when the smallest coherent change or proposal is complete and its required verification is reported honestly." }
+        "REACT" {
+            if ($Agent -eq "deepseek_flash") {
+                "Stop when the read-only proposal covers the requested result, maps the acceptance criteria, and clearly surfaces child-verifiable versus parent-owned verification. Do not claim that the implementation or its tests were executed."
+            } else {
+                "Stop when the requested result is implemented, child-verifiable acceptance criteria are satisfied, and any remaining parent-owned criteria are explicitly surfaced for parent verification. Do not mistake a partial implementation or a merely runnable artifact for completion."
+            }
+        }
         "SPEC" {
             if ($Agent -eq "deepseek_flash") {
                 "If the supplied evidence involves concurrency, distributed invariants, fencing, security boundaries, complex architecture, conflicting modules, or edit-dependent verification, stop analysis and return ESCALATE_TO_PRO with the complete Evidence Packet; do not solve it in Flash. Otherwise stop when the bounded root cause is supported and material alternatives are eliminated."

@@ -575,6 +575,9 @@ def test_python_and_powershell_protocol_parity():
         "supplied evidence directly",
         "Original images",
         "authoritative source",
+        "acceptance criteria",
+        "parent-owned",
+        "merely runnable artifact",
     ):
         assert semantic_marker in py_source, f"Python reasoning marker drifted: {semantic_marker}"
         assert semantic_marker in ps1_source, f"PowerShell reasoning marker drifted: {semantic_marker}"

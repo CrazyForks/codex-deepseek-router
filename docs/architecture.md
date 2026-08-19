@@ -26,7 +26,7 @@ Codex parent
 | Plugin | manifest, Skill/Hook discovery, review/trust UI | store API keys or modify private Codex state |
 | Management Skill | setup, status, doctor, migration and uninstall workflow | write Hook config or trust hashes |
 | Routing Skill | modality, policy, context and Flash/Pro selection | expose chain-of-thought or bypass parent validation |
-| Reasoning Adapter | compose policy contract, asymmetric model tuning and stop condition | select model/policy, rewrite system/tool surfaces, call providers or mutate handoff state |
+| Reasoning Adapter | compose policy contract, asymmetric model tuning and acceptance-aware stop condition | select model/policy, rewrite system/tool surfaces, call providers or mutate handoff state |
 | Hook | parse `SubagentStart`, claim one-shot handoff, inject first-turn context | call the API or classify the task again |
 | Runtime | context budget, sanitizer, adapter, fallback router/client, errors and usage | become the parent decision maker |
 
@@ -65,13 +65,29 @@ time. Native handoff places the additive blocks in
 `SubagentStart.additionalContext` before the first provider request; fallback
 renders the same blocks around its bounded task context.
 
+### Acceptance-driven completion
+
+The parent assignment is the source of completion semantics. Delegated
+assignments should include `ACCEPTANCE CRITERIA`, `VERIFICATION OWNER`, and a
+`STOPPING CONDITION` in their text without adding fields to the envelope. REACT
+children implement the smallest coherent solution that can satisfy those
+criteria, verify the criteria within their capability, and surface
+parent-owned criteria instead of treating a merely runnable artifact as done.
+
+The Codex parent remains the acceptance gate: it checks the actual artifact,
+tests, runtime output, or visual evidence available to it. Missing visual
+evidence is `UNVERIFIED`, never an implied pass. A material gap may trigger at
+most one bounded Pro + REACT follow-up; optional polish does not. This is the
+project's information-driven convergence extension, not a new policy, schema
+field, transport state, or DSH-native capability.
+
 Because standalone fallback has no native Codex tools, Flash SPEC always
 returns an escalation. The fallback parser preserves a provider-supplied
 Evidence Packet or maps only the provider's returned structured summary,
 findings and evidence into the required packet fields. Native Hook children
 retain conditional SPEC-Lite escalation.
 
-`REASONING_ADAPTER_VERSION = 5` is recorded by the evaluation harness. The
+`REASONING_ADAPTER_VERSION = 6` is recorded by the evaluation harness. The
 Adapter does not add Standard/Spec surfaces, weak/mixed policies, keyword
 classification, or any child self-routing.
 

@@ -27,7 +27,7 @@ def test_flash_deep_is_rejected_with_actionable_error():
 
 
 def test_adapter_has_one_version_and_four_parent_selected_policies():
-    assert reasoning.REASONING_ADAPTER_VERSION == 5
+    assert reasoning.REASONING_ADAPTER_VERSION == 6
     assert set(reasoning.VALID_ROUTE_MATRIX) == {"deepseek_flash", "deepseek_pro"}
     assert reasoning.POLICIES == {"FAST", "REACT", "SPEC", "DEEP"}
     assert "weak" not in reasoning.POLICIES
@@ -36,9 +36,24 @@ def test_adapter_has_one_version_and_four_parent_selected_policies():
 
 def test_flash_react_is_read_only_proposal_contract():
     contract = reasoning.get_policy_contract("deepseek_flash", "REACT")
+    stop = reasoning.get_stop_condition("deepseek_flash", "REACT")
     assert "read-only" in contract
     assert "Do not modify" in contract
     assert "suggested tests" in contract
+    assert "acceptance criteria" in contract
+    assert "parent-owned" in contract
+    assert "read-only proposal" in stop
+    assert "implementation or its tests were executed" in stop
+
+
+def test_pro_react_is_acceptance_driven_not_minimum_runtime_driven():
+    contract = reasoning.get_policy_contract("deepseek_pro", "REACT")
+    stop = reasoning.get_stop_condition("deepseek_pro", "REACT")
+    assert "requested result" in contract
+    assert "child-verifiable" in contract
+    assert "parent-owned criteria" in contract
+    assert "merely runnable artifact" in stop
+    assert "smallest coherent change or proposal is complete" not in stop
 
 
 def test_flash_spec_lite_escalates_deep_work_with_evidence():

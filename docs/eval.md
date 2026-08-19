@@ -122,6 +122,28 @@ timeouts or to claim that Native Pro is unavailable. The standalone result is
 still gated for API-level follow-up until timeout/network telemetry is separated;
 Native release acceptance requires a separate Hook-backed Codex smoke and trace.
 
+## Native quality-sensitive regression
+
+`eval/native-quality-tasks.json` freezes three native-only acceptance cases:
+`visual-black-hole`, `responsive-ui`, and `interactive-canvas`. The black-hole
+prompt is intentionally fixed rather than softened to fit an implementation.
+Each case records functional and visual acceptance criteria plus
+`verification_owner: SHARED`: the child verifies deterministic runtime
+behavior, while the parent verifies the rendered artifact.
+
+Run these through the real Native Codex path (`stage` → `SubagentStart` →
+`spawn_agent` → callback) with two or three repetitions per variant when the
+environment can capture browser renders. Record child/parent duration, tool
+calls, reads, edits, runtime success, parent follow-up, final artifact and
+screenshot path. Compare anonymized screenshot pairs (A old, B current, C
+acceptance-driven) on the original user requirements; do not reduce the result
+to a single fixed 0/1/2 score or a fabricated visual score.
+
+The acceptance-driven variant is retained only if it improves or preserves
+material user acceptance, does not regress ordinary REACT tasks, and keeps
+efficiency benefits within observed run-to-run variation. A missing screenshot
+is `VISUAL_QUALITY_UNVERIFIED`, not evidence of a pass.
+
 ## Multimodal truth boundary (Epic 20)
 
 Use a fixture where the parent supplies "the button is 40px below the

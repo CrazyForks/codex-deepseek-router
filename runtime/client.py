@@ -77,7 +77,9 @@ def build_fallback_prompt(
             "CONVERGENCE / STOP CONDITION\n" + reasoning.stop_condition,
             "CAPABILITY BOUNDARY\nThis is an explicit text-only fallback request, not the native Codex "
             "subagent tool environment. Use only supplied context; do not claim unprovided tool access, "
-            "workspace edits, commands, or tests.",
+            "workspace edits, commands, tests, screenshots, or visual quality. If the assignment has "
+            "parent-owned visual criteria, report them as VISUAL_QUALITY_UNVERIFIED for the parent "
+            "instead of claiming acceptance.",
             "OUTPUT FORMAT\n" + output_contract,
         ]
     )

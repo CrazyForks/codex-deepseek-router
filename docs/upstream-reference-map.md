@@ -111,6 +111,12 @@ The project re-implements, in its own compact language and architecture:
 - separate Flash/Pro empirical evaluation;
 - optional mechanical closure as an experimental idea only.
 
+The project adapts that convergence idea as `information-driven convergence`:
+the parent writes explicit acceptance criteria into the assignment, the child
+verifies only child-owned criteria, and the parent may issue one bounded
+follow-up for a material gap. This parent acceptance gate is project-local; it
+is not claimed as a DSH-native feature or implemented as a new policy.
+
 It does **not** import the DSH runtime/injector, Standard/Spec surface names,
 dynamic tool catalog, weak/mixed modes, persona-vector system or learned
 router. Near-field remains a separately gated P2 analogy, not a port. The

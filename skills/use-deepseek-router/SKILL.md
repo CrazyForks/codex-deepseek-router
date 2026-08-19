@@ -72,8 +72,10 @@ Do not delegate trivial work whose handoff cost exceeds its value.
 ## Step 3 — Policy
 
 - `FAST`: minimum investigation -> result -> stop. (Flash)
-- `REACT`: understand -> implement -> test -> fix -> converge. (Pro for
-  implementation; Flash may prepare the change as a read-only proposal)
+- `REACT`: understand the requested result -> implement the smallest coherent
+  solution that can satisfy the assignment -> test -> check child-verifiable
+  acceptance criteria -> fix -> converge. (Pro for implementation; Flash may
+  prepare the change as a read-only proposal)
 - `SPEC`: inspect -> trace -> hypothesis -> evidence -> root cause ->
   smallest fix -> verify. (Pro; Flash may run a SPEC-Lite exploration)
 - `DEEP`: system model -> invariants -> failure modes -> alternatives ->
@@ -82,6 +84,96 @@ Do not delegate trivial work whose handoff cost exceeds its value.
 Every DeepSeek agent reasons until there is enough evidence to act, then
 commits. If it cannot continue, it returns `BLOCKED` with what is missing,
 why, and the minimal next step.
+
+### Assignment contract
+
+Every delegated assignment is a bounded contract, not a general request for
+the child to keep improving the workspace. Include these sections whenever
+they are relevant:
+
+```text
+OBJECTIVE
+...
+
+SCOPE
+...
+
+EXCLUSIONS
+...
+
+PERMISSIONS
+...
+
+OUTPUT CONTRACT
+...
+
+ACCEPTANCE CRITERIA
+- ...
+- ...
+
+VERIFICATION OWNER
+CHILD | PARENT | SHARED
+
+STOPPING CONDITION
+...
+```
+
+`ACCEPTANCE CRITERIA` state what must be true for the requested result to be
+complete. `STOPPING CONDITION` states what evidence permits the child to
+return. `VERIFICATION OWNER` is assignment text only: use `CHILD` for
+deterministic checks the child can run, `PARENT` for parent-only evidence such
+as screenshots or sensitive final judgment, and `SHARED` when the child checks
+functionality while the parent checks final quality.
+
+For ordinary functional work, keep the criteria concrete and short:
+
+```text
+ACCEPTANCE CRITERIA
+- endpoint exists at the requested path
+- documented status code and response body are returned
+- relevant tests pass without regressions
+
+VERIFICATION OWNER
+CHILD
+```
+
+For root-cause or architecture work, require evidence and invariant closure:
+
+```text
+ACCEPTANCE CRITERIA
+- root cause is supported by concrete evidence
+- material alternative explanations are addressed
+- the relevant invariant is preserved by the proposed fix
+- a verification plan or actual verification is reported
+
+VERIFICATION OWNER
+SHARED
+```
+
+For visual, UI, or WebGL work, translate the user's requested result into
+observable criteria instead of treating “it runs” as completion. Keep visual
+judgment parent-owned or shared, and never ask a text-only child to inspect an
+original screenshot.
+
+Example for a high-precision interactive black-hole request:
+
+```text
+ACCEPTANCE CRITERIA
+Functional:
+- single HTML/JS artifact runs in a modern browser
+- mouse interaction works and animation remains continuous
+
+Visual / physical:
+- black-hole shadow is visually clear
+- gravitational lensing is obvious
+- the rear accretion disk is visibly folded/lensed around the shadow
+- the accretion disk reads as a disk, not merely a glowing torus
+- left/right Doppler brightness asymmetry is clearly visible
+- the result is immediately recognizable as a striking black-hole simulation
+
+VERIFICATION OWNER
+SHARED
+```
 
 The runtime validates the route contract before staging and again when an
 envelope is read. `deepseek_flash + DEEP` is an error: do not silently change
@@ -98,7 +190,8 @@ parent's semantic decision.
 4. Select Flash or Pro.
 5. Select the reasoning policy.
 6. Build one bounded, self-contained assignment (objective, scope,
-   exclusions, permissions, output contract, stopping condition).
+   exclusions, permissions, output contract, acceptance criteria,
+   verification owner, stopping condition).
 7. Add the Visual Context Packet if needed.
 8. Stage the complete assignment through the installed handoff script in
    `stage` mode, then spawn with the exact agent type and
@@ -152,6 +245,56 @@ If Flash returns `ESCALATE_TO_PRO`:
 
 If DeepSeek returns `NEED_VISUAL_CLARIFICATION`, inspect the visual input
 yourself and re-dispatch with the missing facts; do not let the child guess.
+
+## Parent acceptance gate
+
+When the child returns, the parent verifies the assignment rather than merely
+accepting the child's completion summary:
+
+1. Check the actual artifact, tests, runtime output, or other evidence that is
+   available to the parent.
+2. Mark parent-owned criteria `UNVERIFIED` when the required evidence (for
+   example, a browser render or screenshot) is not available. Do not claim
+   visual or quality acceptance without that evidence.
+3. Finish when all material criteria are satisfied or an honest blocked/
+   unverifiable limitation is reported.
+4. Only when a material gap directly violates an explicit user requirement,
+   issue one additional bounded `deepseek_pro + REACT` assignment. Do not
+   follow up for optional polish, extra parameters, or subjective tweaks the
+   user did not request.
+
+The automatic follow-up allowance is at most one. After the second parent
+review, stop and report any remaining limitation; no runtime retry counter or
+follow-up state machine is added.
+
+Use this structure for that one follow-up:
+
+```text
+OBJECTIVE
+Refine the existing implementation only for the material acceptance gaps below.
+
+CURRENT BASELINE
+Use the existing implementation as the baseline. Do not restart from scratch.
+
+PASSED CRITERIA
+- ...
+
+MATERIAL GAPS
+1. ...
+
+DO NOT CHANGE
+- ...
+
+VERIFICATION TARGET
+- ...
+
+STOPPING CONDITION
+Stop after the listed material gaps are addressed and the affected behavior is verified.
+```
+
+The follow-up must name the gaps and the verification target; “optimize it
+again” is not a bounded assignment. Preserve passed criteria and working
+transport/runtime behavior.
 
 ## Data boundary
 

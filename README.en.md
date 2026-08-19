@@ -137,6 +137,20 @@ Flash can return `ESCALATE_TO_PRO` with an Evidence Packet so Pro continues
 from collected evidence instead of scanning the repository again. FAST / REACT
 / SPEC / DEEP are bounded decision contracts, not extra models or runtimes.
 
+Router optimizes for useful convergence, not minimum runtime. A delegated
+assignment should state `ACCEPTANCE CRITERIA`, `VERIFICATION OWNER`, and a
+`STOPPING CONDITION`. REACT must satisfy the material criteria the child can
+verify and surface parent-owned criteria such as screenshot or final visual
+quality checks; “the page runs” is not acceptance by itself. The parent checks
+the actual artifact and evidence, and issues at most one bounded `Pro + REACT`
+follow-up only for a material gap that directly violates an explicit user
+requirement. Without visual evidence, the result is `UNVERIFIED`, never an
+invented quality pass.
+
+This information-driven, acceptance-criteria-driven completion adds no fifth
+policy, acceptance-profile schema field, or transport state machine; ordinary
+functional work remains fast.
+
 On the child's first turn, a shared Reasoning Adapter composes a policy
 execution contract and stop condition, plus a short reminder for Flash to use
 supplied evidence, obey output and honesty constraints, and explore only when

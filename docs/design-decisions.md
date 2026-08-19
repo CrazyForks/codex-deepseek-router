@@ -28,7 +28,7 @@ blocks without asking the child to ignore higher-priority instructions.
 
 Flash receives a short reminder to use supplied evidence directly, obey
 requested output and honesty constraints, and do extra discovery only when a
-missing fact blocks the answer. Pro receives no generic model tuning in adapter version 5. Its behavior
+missing fact blocks the answer. Pro receives no generic model tuning in adapter version 6. Its behavior
 comes from the parent-selected execution contract and stop condition. This
 matches the pinned source's warning that extra recall/converge and few-shot
 anchors can hurt Pro, while preserving this project's stronger semantic parent
@@ -45,6 +45,24 @@ The one-pending-file-per-role, claim-first, TTL, quarantine, lock, rollback,
 and at-most-once behavior remains intact. Same-role parallel Flash work needs
 handoff-id-to-child correlation and is a separate transport V2 project, not a
 prompt change.
+
+## Make completion acceptance-driven
+
+The 2026-08 acceptance review found that a fast REACT stop could equate
+“implemented and runnable” with “accepted,” especially for visual/WebGL work.
+Assignments now carry `ACCEPTANCE CRITERIA`, `VERIFICATION OWNER`, and a
+`STOPPING CONDITION` as plain text. This avoids an envelope migration while
+making the requested result explicit. The REACT contract requires the child to
+verify child-owned criteria and surface parent-owned criteria; the parent
+checks actual artifacts and may issue at most one bounded Pro + REACT
+follow-up for a material gap. Missing visual evidence is reported as
+`UNVERIFIED` rather than guessed.
+
+This is the project's information-driven convergence extension, inspired by
+the DSH emphasis on information completeness. It is not a DSH-native
+capability, a fifth policy, an acceptance-profile schema, or a transport state
+machine. Ordinary functional work remains short; quality-sensitive work keeps
+the evidence needed for user acceptance.
 
 ## Evaluate causal pieces separately
 

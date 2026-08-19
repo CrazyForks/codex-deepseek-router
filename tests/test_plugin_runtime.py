@@ -82,7 +82,7 @@ def test_fallback_rejects_flash_deep():
     [
         ("flash", "FAST", "minimum direct evidence"),
         ("flash", "REACT", "precise read-only proposal"),
-        ("pro", "REACT", "smallest coherent change"),
+        ("pro", "REACT", "requested result"),
         ("pro", "DEEP", "material failure modes"),
     ],
 )
@@ -92,6 +92,7 @@ def test_fallback_prompt_uses_reasoning_adapter(mode, policy, marker):
     assert "POLICY EXECUTION CONTRACT" in prompt
     assert "CONVERGENCE / STOP CONDITION" in prompt
     assert "explicit text-only fallback" in prompt
+    assert "VISUAL_QUALITY_UNVERIFIED" in prompt
     assert marker in prompt
     assert prompt.index("TASK CONTEXT") < prompt.index("POLICY EXECUTION CONTRACT")
     assert prompt.index("CONVERGENCE / STOP CONDITION") < prompt.index("OUTPUT FORMAT")

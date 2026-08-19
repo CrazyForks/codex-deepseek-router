@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Optional
 
 
-REASONING_ADAPTER_VERSION = 5
+REASONING_ADAPTER_VERSION = 6
 
 FLASH_AGENT = "deepseek_flash"
 PRO_AGENT = "deepseek_pro"
@@ -26,15 +26,19 @@ FAST_CONTRACT = (
 )
 
 PRO_REACT_CONTRACT = (
-    "Understand only the context needed for the smallest coherent change, implement it, run the "
-    "minimum relevant verification, fix any resulting failure, and stop. Do not widen scope or build "
-    "frameworks, scaffolding, or ceremony the parent did not request."
+    "Understand the requested result and only the context needed to implement the smallest coherent "
+    "solution that can satisfy the assignment. Implement it, run functional verification, check the "
+    "explicit acceptance criteria within your capability, report parent-owned criteria as unverified, "
+    "fix resulting failures, and stop once child-verifiable criteria are satisfied and remaining "
+    "parent-owned criteria are surfaced. Do not widen scope or build frameworks, scaffolding, or "
+    "ceremony the parent did not request."
 )
 
 FLASH_REACT_CONTRACT = (
-    "Locate the exact change and its constraints, then return a precise read-only proposal with "
-    "affected files, patch or diff, and suggested tests. Do not modify the workspace or claim that a "
-    "proposed edit or verification was executed."
+    "Locate the exact change and its constraints, map the assignment's acceptance criteria, then "
+    "return a precise read-only proposal with affected files, patch or diff, suggested tests, and a "
+    "clear split between child-verifiable and parent-owned criteria. Do not modify the workspace or "
+    "claim that a proposed edit or verification was executed."
 )
 
 PRO_SPEC_CONTRACT = (
@@ -68,10 +72,21 @@ PRO_TUNING_MINIMAL = ""
 
 STOP_CONDITIONS = {
     "FAST": "Stop when direct evidence supports the answer and no unresolved issue can materially change it.",
-    "REACT": "Stop when the smallest coherent change or proposal is complete and its required verification is reported honestly.",
+    "REACT": (
+        "Stop when the requested result is implemented, child-verifiable acceptance criteria are "
+        "satisfied, and any remaining parent-owned criteria are explicitly surfaced for parent "
+        "verification. Do not mistake a partial implementation or a merely runnable artifact for "
+        "completion."
+    ),
     "SPEC": "Stop after one root cause is supported, material alternatives are eliminated, and the fix or recommendation is verified where possible.",
     "DEEP": "Stop when information is sufficient to distinguish the main alternatives and further analysis would add completeness without changing the decision.",
 }
+
+FLASH_REACT_STOP = (
+    "Stop when the read-only proposal covers the requested result, maps the acceptance criteria, "
+    "and clearly surfaces child-verifiable versus parent-owned verification. Do not claim that the "
+    "implementation or its tests were executed."
+)
 
 FLASH_SPEC_STOP = (
     "If the supplied evidence involves concurrency, distributed invariants, fencing, security "
@@ -144,7 +159,12 @@ def get_model_tuning(agent_type: str, policy: str) -> str:
 
 def get_stop_condition(agent_type: str, policy: str) -> str:
     validate_route_contract(agent_type, policy)
-    stop = FLASH_SPEC_STOP if agent_type == FLASH_AGENT and policy == "SPEC" else STOP_CONDITIONS[policy]
+    if agent_type == FLASH_AGENT and policy == "SPEC":
+        stop = FLASH_SPEC_STOP
+    elif agent_type == FLASH_AGENT and policy == "REACT":
+        stop = FLASH_REACT_STOP
+    else:
+        stop = STOP_CONDITIONS[policy]
     return stop + " " + BLOCKED_CONTRACT
 
 

@@ -128,6 +128,17 @@ Flash 可以返回带 Evidence Packet 的 `ESCALATE_TO_PRO`；Pro 从已有证�
 不重新扫描整个仓库。FAST / REACT / SPEC / DEEP 为有边界的决策合同，不是
 额外的模型或运行时。
 
+Router 优化的是有用收敛，而不是最低运行时间。每个委托 assignment 应显式
+写出 `ACCEPTANCE CRITERIA`、`VERIFICATION OWNER` 和 `STOPPING CONDITION`。
+REACT 子 Agent 必须满足自己能够验证的关键条件，并把父 Agent 才能判断的条件
+（例如截图或最终视觉质量）明确暴露；页面能运行不等于任务已验收。父 Agent
+会检查真实产物和证据，只有直接违反用户明确要求的 material gap 才会触发一次
+有边界的 `Pro + REACT` 跟进，之后如实报告剩余限制。没有真实视觉证据时，结论
+标记为 `UNVERIFIED`，不会伪造通过。
+
+这套“信息驱动收敛 + Acceptance Criteria 驱动完成”不新增第五个 Policy、
+Acceptance Profile schema 字段或 transport 状态机；普通功能任务仍保持快速收敛。
+
 路由器会在子 Agent 第一轮注入按策略区分的执行合同与停止条件，并只给 Flash
 增加短小的“直接使用已有证据、遵守输出与诚实约束、缺事实才继续探索” tuning；
 Pro 默认不叠加通用 Anchor。

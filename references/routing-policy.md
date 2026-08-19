@@ -49,9 +49,14 @@ downgraded or rewritten.
 
 - **FAST** — inspect the minimum needed → answer → stop. Search,
   extraction, simple investigation. Flash.
-- **REACT** — understand → implement → test → fix → converge. Clear
-  requirements, clear path. Pro for implementation; Flash may prepare the
-  change as a read-only proposal (diff or plan) for the parent to land.
+- **REACT** — understand the requested result → implement the smallest
+  coherent solution that can satisfy the assignment → test → check explicit
+  child-verifiable acceptance criteria → fix → converge. Clear requirements,
+  clear path. Pro for implementation; Flash may prepare the change as a
+  read-only proposal (diff or plan) for the parent to land. A runnable partial
+  implementation is not completion when material criteria remain unresolved.
+  Flash's read-only REACT variant instead stops after a proposal maps the
+  criteria and separates child-verifiable from parent-owned checks.
 - **SPEC** — inspect → trace → hypothesis → evidence → root cause →
   smallest fix → verify. Bugs, reviews, unexpected behavior. Pro (Flash may
   run a SPEC-Lite exploration).
@@ -60,9 +65,22 @@ downgraded or rewritten.
   systems, complex concurrency, security, very hard root cause. Pro only.
 
 Every policy converges: reason until there is enough evidence to act, then
-commit. Unbounded reasoning, repeated hypotheses and analysis-without-action
-are forbidden; an agent that cannot continue returns `BLOCKED` (what is
-missing, why, minimal next step).
+commit. For REACT, the assignment must state `ACCEPTANCE CRITERIA`,
+`VERIFICATION OWNER` (`CHILD`, `PARENT`, or `SHARED`), and a
+`STOPPING CONDITION`. The child verifies only criteria within its capability
+and surfaces parent-owned criteria for the parent. Unbounded reasoning,
+repeated hypotheses and analysis-without-action are forbidden; an agent that
+cannot continue returns `BLOCKED` (what is missing, why, minimal next step).
+
+## Parent acceptance gate
+
+The Codex parent checks actual artifacts, tests, runtime output, and available
+visual evidence after every child return. Without a screenshot or render, a
+visual criterion is `UNVERIFIED`, not passed. Only a material gap that directly
+violates an explicit user requirement may trigger one bounded Pro + REACT
+follow-up; after that review, remaining limitations are reported honestly.
+This preserves information-driven convergence without adding a fifth policy,
+acceptance-profile schema field, or runtime retry state.
 
 Agent TOMLs contain only role and safety invariants. Dynamic investigation,
 implementation and closure flows live in the Reasoning Adapter so a FAST
@@ -71,7 +89,7 @@ request does not inherit an unrelated exhaustive workflow.
 Model tuning is intentionally asymmetric. Flash is reminded to use supplied
 evidence directly, obey output and honesty constraints, and do extra discovery
 only when a missing fact blocks the answer. Pro receives no generic tuning in
-adapter version 5: the pinned DSH source reports that additional recall/converge and
+adapter version 6: the pinned DSH source reports that additional recall/converge and
 few-shot anchors can reduce Pro performance, while this project already has an
 explicit parent-selected policy contract. A/B/C ablation may add Pro tuning in
 the future only if it earns its cost.
