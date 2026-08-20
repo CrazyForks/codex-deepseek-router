@@ -247,6 +247,26 @@ def test_install_agent_allows_previous_managed_content(paths):
     assert manager.install_agent(paths, spec, manifest) is False
 
 
+def test_install_agent_rejects_line_ending_change_for_exact_byte_manifest(paths):
+    spec = manager.AGENT_SPECS[manager.FLASH_ROLE]
+    manager.install_agent(paths, spec, {})
+    manifest = {
+        "hash_version": manager.HASH_VERSION_EXACT_BYTES,
+        "hashes": {"flash_agent": manager.sha256_file(paths.flash_agent)},
+    }
+    paths.flash_agent.write_bytes(paths.flash_agent.read_bytes().replace(b"\n", b"\r\n"))
+
+    with pytest.raises(manager.ManagerError) as exc:
+        manager.install_agent(
+            paths,
+            spec,
+            manifest,
+            allow_legacy_line_endings=True,
+        )
+
+    assert exc.value.code == "conflict"
+
+
 def test_install_catalog_conflict_and_adopt(paths):
     payload_bytes = (json.dumps(manager.catalog_payload(), ensure_ascii=False, indent=2) + "\n").encode()
     paths.catalog.write_bytes(payload_bytes)  # identical foreign content -> adopted
@@ -518,6 +538,30 @@ def test_setup_adopts_consistent_legacy_agent_configuration(
         manager.agent_toml_text(manager.AGENT_SPECS[manager.PRO_ROLE], legacy),
         encoding="utf-8",
     )
+
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+
+    saved = json.loads(paths.settings.read_text(encoding="utf-8"))
+    assert saved["base_url"] == "https://legacy.example/v1"
+    assert saved["flash_model"] == "legacy-flash"
+    assert saved["pro_model"] == "legacy-pro"
+
+
+def test_setup_adopts_crlf_legacy_agent_configuration(
+    paths, fake_codex, no_credentials
+):
+    legacy = manager.RouterConfig(
+        base_url="https://legacy.example/v1",
+        flash_model="legacy-flash",
+        pro_model="legacy-pro",
+    )
+    paths.flash_agent.parent.mkdir(parents=True, exist_ok=True)
+    for role, target in (
+        (manager.FLASH_ROLE, paths.flash_agent),
+        (manager.PRO_ROLE, paths.pro_agent),
+    ):
+        text = manager.agent_toml_text(manager.AGENT_SPECS[role], legacy)
+        target.write_bytes(text.replace("\n", "\r\n").encode())
 
     manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
 

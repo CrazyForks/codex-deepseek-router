@@ -1421,15 +1421,23 @@ def install_agent(
     manifest: Dict[str, Any],
     config: Optional[RouterConfig] = None,
     restore_managed: bool = False,
+    allow_legacy_line_endings: bool = False,
 ) -> bool:
     """Write one agent TOML. Raises conflict on foreign content. Returns True when the file changed."""
     target = paths.agent_path(spec.role)
     text = agent_toml_text(spec, config)
     data = text.encode()
     hash_key = "flash_agent" if spec.role == FLASH_ROLE else "pro_agent"
-    if target.is_file() and not _assert_writable_target(
+    writable = not target.is_file() or _assert_writable_target(
         target, data, manifest, hash_key, restore_managed
-    ):
+    )
+    tracked_hash = (manifest.get("hashes") or {}).get(hash_key)
+    if not writable and allow_legacy_line_endings and not tracked_hash:
+        try:
+            writable = target.read_text(encoding="utf-8") == text
+        except (OSError, UnicodeError):
+            writable = False
+    if not writable:
         raise ManagerError(
             "conflict",
             f"Existing agent file differs from the router-managed target: {target}",
@@ -2019,15 +2027,26 @@ def apply_managed_assets(
     manifest: Dict[str, Any],
     config: Optional[RouterConfig] = None,
     restore_managed: bool = False,
+    allow_legacy_agent_line_endings: bool = False,
 ) -> Tuple[Dict[str, bool], bool]:
     """Install/refresh non-Plugin assets. Plugin Skills and Hooks stay in-place."""
     changed: Dict[str, bool] = {}
     changed["catalog"] = install_catalog(paths, manifest, config, restore_managed)
     changed["flash_agent"] = install_agent(
-        paths, AGENT_SPECS[FLASH_ROLE], manifest, config, restore_managed
+        paths,
+        AGENT_SPECS[FLASH_ROLE],
+        manifest,
+        config,
+        restore_managed,
+        allow_legacy_agent_line_endings,
     )
     changed["pro_agent"] = install_agent(
-        paths, AGENT_SPECS[PRO_ROLE], manifest, config, restore_managed
+        paths,
+        AGENT_SPECS[PRO_ROLE],
+        manifest,
+        config,
+        restore_managed,
+        allow_legacy_agent_line_endings,
     )
     handoff_paths = {
         key: path
@@ -2285,6 +2304,12 @@ def setup(
     )
     manifest = read_manifest(paths)
     previous = manifest or {}
+    allow_legacy_agent_line_endings = (
+        not manifest
+        and not paths.settings.is_file()
+        and paths.flash_agent.is_file()
+        and paths.pro_agent.is_file()
+    )
     if (
         not manifest
         and not paths.settings.is_file()
@@ -2312,7 +2337,12 @@ def setup(
             )
         # 4-6. Managed assets: catalog and both agents. Plugin Skills/Hooks are
         # discovered from the installed Plugin and are never copied globally.
-        changed, _ = apply_managed_assets(paths, previous, config)
+        changed, _ = apply_managed_assets(
+            paths,
+            previous,
+            config,
+            allow_legacy_agent_line_endings=allow_legacy_agent_line_endings,
+        )
         previous_settings = paths.settings.read_bytes() if paths.settings.is_file() else None
         save_router_config(paths, config)
         changed["settings"] = previous_settings != paths.settings.read_bytes()
