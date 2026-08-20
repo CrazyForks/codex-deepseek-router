@@ -11,15 +11,24 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from .context import TaskContext, sanitize_context
+from .provider_config import (
+    DEFAULT_BASE_URL,
+    DEFAULT_FLASH_MODEL,
+    DEFAULT_PRO_MODEL,
+    ProviderConfigError,
+    RouterConfig,
+    load_router_config,
+)
 from .protocol import ErrorCode, RouterError, RoutingResult
 from .reasoning import RouteContractError, build_reasoning_context, validate_route_contract
 
 
-MODELS = {"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro"}
-BASE_URL = "https://api.deepseek.com"
+MODELS = {"flash": DEFAULT_FLASH_MODEL, "pro": DEFAULT_PRO_MODEL}
+BASE_URL = DEFAULT_BASE_URL
 OUTPUT_CONTRACT = (
     "Return JSON only with summary, findings, reasoning_summary, risks, recommendations, confidence, "
     "and evidence fields observed/inferred/recommended/uncertain. Provide only a concise reasoning "
@@ -32,6 +41,15 @@ FLASH_SPEC_OUTPUT_EXTENSION = (
     "recommended_next_step. Do not claim final resolution, edits, or verification in Flash."
 )
 GUIDANCE_VARIANTS = {"current", "contract_only", "contract_tuning"}
+
+
+def _load_router_settings() -> RouterConfig:
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+    settings_path = codex_home / "deepseek-router" / "settings.json"
+    try:
+        return load_router_config(settings_path) or RouterConfig()
+    except ProviderConfigError as exc:
+        raise RouterError(ErrorCode.CONFIGURATION, str(exc)) from exc
 
 
 def _agent_type(mode: str) -> str:
@@ -184,10 +202,11 @@ def _fallback_evidence_packet(structured: Mapping[str, Any], evidence: Mapping[s
 @dataclass
 class DeepSeekClient:
     mode: str
-    base_url: str = BASE_URL
+    base_url: Optional[str] = None
     timeout: float = 45.0
     retries: int = 2
     opener: Callable[..., Any] = urllib.request.urlopen
+    model: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.mode not in MODELS:
@@ -205,6 +224,17 @@ class DeepSeekClient:
         key = get_api_key()
         if not key:
             raise RouterError(ErrorCode.AUTH, "DeepSeek API key is not configured")
+        settings = _load_router_settings()
+        try:
+            resolved = RouterConfig(
+                base_url=self.base_url or settings.base_url,
+                flash_model=self.model if self.mode == "flash" and self.model else settings.flash_model,
+                pro_model=self.model if self.mode == "pro" and self.model else settings.pro_model,
+            )
+        except ProviderConfigError as exc:
+            raise RouterError(ErrorCode.CONFIGURATION, str(exc)) from exc
+        resolved_base_url = resolved.base_url
+        resolved_model = resolved.model_for(self.mode)
         resolved_policy = _default_policy(self.mode) if policy is None else policy.upper()
         rendered = TaskContext(task=task, relevant_files={"context": sanitize_context(context or {})}).render(self.mode)
         prompt = build_fallback_prompt(
@@ -213,7 +243,7 @@ class DeepSeekClient:
             rendered,
             guidance_variant=_reasoning_variant,
         )
-        body = json.dumps({"model": MODELS[self.mode], "input": prompt}).encode("utf-8")
+        body = json.dumps({"model": resolved_model, "input": prompt}).encode("utf-8")
         request_id = uuid.uuid4().hex
         started = time.monotonic()
         last_error: Optional[RouterError] = None
@@ -221,7 +251,7 @@ class DeepSeekClient:
             if cancel_event is not None and cancel_event.is_set():
                 raise RouterError(ErrorCode.CANCELLED, "DeepSeek request cancelled")
             request = urllib.request.Request(
-                self.base_url.rstrip("/") + "/responses",
+                resolved_base_url.rstrip("/") + "/responses",
                 data=body,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "X-Request-ID": request_id},
                 method="POST",
@@ -243,10 +273,10 @@ class DeepSeekClient:
                     )
                     escalate_to_pro = structured.get("escalate_to_pro") is True
                 usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-                usage = {**usage, "model": MODELS[self.mode], "latency_ms": round((time.monotonic() - started) * 1000), "request_id": request_id}
+                usage = {**usage, "model": resolved_model, "latency_ms": round((time.monotonic() - started) * 1000), "request_id": request_id}
                 return RoutingResult(
                     mode=self.mode,
-                    model=MODELS[self.mode],
+                    model=resolved_model,
                     status="completed",
                     summary=str(structured.get("summary", "")),
                     findings=_list_field(structured.get("findings")),

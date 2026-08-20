@@ -53,6 +53,64 @@ def test_agents_are_independent(tmp_path):
     assert paths.flash_agent != paths.pro_agent
     assert paths.flash_agent.name == "deepseek-flash.toml"
     assert paths.pro_agent.name == "deepseek-pro.toml"
+    assert paths.settings == paths.state_dir / "settings.json"
+
+
+def test_router_config_defaults_and_partial_overrides(tmp_path):
+    paths = manager.Paths(tmp_path)
+
+    defaults = manager.resolve_router_config(paths)
+    assert defaults.base_url == "https://api.deepseek.com"
+    assert defaults.flash_model == "deepseek-v4-flash"
+    assert defaults.pro_model == "deepseek-v4-pro"
+    assert defaults.wire_api == "responses"
+
+    manager.save_router_config(
+        paths,
+        manager.RouterConfig(
+            base_url="https://example.test/v1",
+            flash_model="flash-old",
+            pro_model="pro-old",
+        ),
+    )
+    resolved = manager.resolve_router_config(paths, flash_model="flash-new")
+    assert resolved.base_url == "https://example.test/v1"
+    assert resolved.flash_model == "flash-new"
+    assert resolved.pro_model == "pro-old"
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "",
+        "ftp://example.test/v1",
+        "https://example.test/v1?key=value",
+        "https://example.test/v1#fragment",
+        "https://example.test/v1/responses",
+        "https://user:password@example.test/v1",
+    ),
+)
+def test_router_config_rejects_invalid_base_url(tmp_path, value):
+    with pytest.raises(manager.ProviderConfigError, match="base URL"):
+        manager.RouterConfig(base_url=value, flash_model="flash", pro_model="pro")
+
+
+def test_agent_and_catalog_render_custom_provider_profile(tmp_path):
+    config = manager.RouterConfig(
+        base_url="http://127.0.0.1:8001/openai/v1",
+        flash_model="v4-flash-0731",
+        pro_model="v4-pro-0813",
+    )
+    flash = manager.agent_toml_text(manager.AGENT_SPECS[manager.FLASH_ROLE], config)
+    catalog = manager.catalog_payload(config)
+
+    assert 'model = "v4-flash-0731"' in flash
+    assert 'base_url = "http://127.0.0.1:8001/openai/v1"' in flash
+    entries = {entry["slug"]: entry for entry in catalog["models"]}
+    assert set(entries) == {"v4-flash-0731", "v4-pro-0813"}
+    assert entries["v4-flash-0731"]["base_url"] == "http://127.0.0.1:8001/openai/v1"
+    assert entries["v4-flash-0731"]["router_roles"] == [manager.FLASH_ROLE]
+    assert entries["v4-pro-0813"]["router_roles"] == [manager.PRO_ROLE]
 
 
 def test_agent_path_rejects_unknown_role(tmp_path):
@@ -381,6 +439,151 @@ def test_hook_trusted_rejects_different_command(paths, fake_codex, monkeypatch):
 # ---------------------------------------------------------------------------
 # setup / status / repair / disable / uninstall lifecycle
 # ---------------------------------------------------------------------------
+
+
+def test_setup_persists_partial_provider_overrides_and_repair_keeps_them(
+    paths, fake_codex, no_credentials
+):
+    first = manager.setup(
+        paths,
+        fake_codex,
+        api_key_stdin=False,
+        skip_live_test=True,
+        base_url="https://example.test/proxy/v1",
+        flash_model="flash-custom",
+        pro_model="pro-custom",
+    )
+    assert first["status"] == "configured"
+    saved = json.loads(paths.settings.read_text(encoding="utf-8"))
+    assert saved["base_url"] == "https://example.test/proxy/v1"
+    assert saved["flash_model"] == "flash-custom"
+    assert saved["pro_model"] == "pro-custom"
+
+    manager.setup(
+        paths,
+        fake_codex,
+        api_key_stdin=False,
+        skip_live_test=True,
+        flash_model="flash-new",
+    )
+    saved = json.loads(paths.settings.read_text(encoding="utf-8"))
+    assert saved == {
+        "schema_version": 1,
+        "base_url": "https://example.test/proxy/v1",
+        "flash_model": "flash-new",
+        "pro_model": "pro-custom",
+    }
+
+    manager.repair(paths, fake_codex)
+    assert 'model = "flash-new"' in paths.flash_agent.read_text(encoding="utf-8")
+    assert 'model = "pro-custom"' in paths.pro_agent.read_text(encoding="utf-8")
+    catalog = json.loads(paths.catalog.read_text(encoding="utf-8"))
+    assert {entry["slug"] for entry in catalog["models"]} == {"flash-new", "pro-custom"}
+
+
+def test_status_reports_persisted_provider_profile_without_credentials(
+    paths, fake_codex, no_credentials
+):
+    manager.setup(
+        paths,
+        fake_codex,
+        api_key_stdin=False,
+        skip_live_test=True,
+        base_url="https://status.example/v1",
+        flash_model="status-flash",
+        pro_model="status-pro",
+    )
+    provider = manager.static_status(paths, fake_codex)["provider"]
+    assert provider["base_url"] == "https://status.example/v1"
+    assert provider["flash_model"] == "status-flash"
+    assert provider["pro_model"] == "status-pro"
+    assert provider["wire_api"] == "responses"
+    assert "api_key" not in json.dumps(provider).lower()
+
+
+def test_setup_adopts_consistent_legacy_agent_configuration(
+    paths, fake_codex, no_credentials
+):
+    legacy = manager.RouterConfig(
+        base_url="https://legacy.example/v1",
+        flash_model="legacy-flash",
+        pro_model="legacy-pro",
+    )
+    paths.flash_agent.parent.mkdir(parents=True, exist_ok=True)
+    paths.flash_agent.write_text(
+        manager.agent_toml_text(manager.AGENT_SPECS[manager.FLASH_ROLE], legacy),
+        encoding="utf-8",
+    )
+    paths.pro_agent.write_text(
+        manager.agent_toml_text(manager.AGENT_SPECS[manager.PRO_ROLE], legacy),
+        encoding="utf-8",
+    )
+
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+
+    saved = json.loads(paths.settings.read_text(encoding="utf-8"))
+    assert saved["base_url"] == "https://legacy.example/v1"
+    assert saved["flash_model"] == "legacy-flash"
+    assert saved["pro_model"] == "legacy-pro"
+
+
+def test_legacy_agent_adoption_rebuilds_recognized_old_catalog(
+    paths, fake_codex, no_credentials
+):
+    legacy = manager.RouterConfig(
+        base_url="https://legacy.example/v1",
+        flash_model="legacy-flash",
+        pro_model="legacy-pro",
+    )
+    paths.flash_agent.parent.mkdir(parents=True, exist_ok=True)
+    paths.flash_agent.write_text(
+        manager.agent_toml_text(manager.AGENT_SPECS[manager.FLASH_ROLE], legacy),
+        encoding="utf-8",
+    )
+    paths.pro_agent.write_text(
+        manager.agent_toml_text(manager.AGENT_SPECS[manager.PRO_ROLE], legacy),
+        encoding="utf-8",
+    )
+    paths.catalog.write_text(
+        json.dumps(manager.catalog_payload(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+
+    catalog = json.loads(paths.catalog.read_text(encoding="utf-8"))
+    assert {entry["slug"] for entry in catalog["models"]} == {
+        "legacy-flash",
+        "legacy-pro",
+    }
+
+
+def test_native_smoke_uses_persisted_custom_models(
+    paths, fake_codex, no_credentials, trusted, monkeypatch
+):
+    seen = []
+
+    def smoke(paths, codex_bin, role, model):
+        seen.append((role, model))
+        return {"role": role, "model": model, "marker_verified": True}
+
+    monkeypatch.setattr(manager, "native_spawn_smoke", smoke)
+    manager.setup(
+        paths,
+        fake_codex,
+        api_key_stdin=False,
+        skip_live_test=True,
+        flash_model="smoke-flash-custom",
+        pro_model="smoke-pro-custom",
+    )
+
+    result = manager.run_tests(paths, fake_codex)
+
+    assert result["status"] == "ready"
+    assert seen == [
+        (manager.FLASH_ROLE, "smoke-flash-custom"),
+        (manager.PRO_ROLE, "smoke-pro-custom"),
+    ]
 
 
 @pytest.mark.skip(reason="Plugin-first setup no longer writes global hooks or duplicate Skills")
@@ -718,6 +921,34 @@ def test_repair_requires_fresh_live_tests(paths, fake_codex, no_credentials, tru
     status = manager.static_status(paths, fake_codex)
     assert status["status"] == "configured"
     assert status["last_test"] is None
+
+
+def test_repair_restores_damaged_managed_provider_assets(
+    paths, fake_codex, no_credentials
+):
+    manager.setup(
+        paths,
+        fake_codex,
+        api_key_stdin=False,
+        skip_live_test=True,
+        base_url="https://repair.example/v1",
+        flash_model="repair-flash",
+        pro_model="repair-pro",
+    )
+    settings_before = paths.settings.read_bytes()
+    paths.flash_agent.write_text('name = "damaged"\n', encoding="utf-8")
+    paths.catalog.write_text('{"damaged": true}\n', encoding="utf-8")
+
+    result = manager.repair(paths, fake_codex)
+
+    assert result["status"] == "configured"
+    assert paths.settings.read_bytes() == settings_before
+    assert 'model = "repair-flash"' in paths.flash_agent.read_text(encoding="utf-8")
+    catalog = json.loads(paths.catalog.read_text(encoding="utf-8"))
+    assert {entry["slug"] for entry in catalog["models"]} == {
+        "repair-flash",
+        "repair-pro",
+    }
 
 
 def test_repair_refreshes_previous_managed_handoff_runtime(
@@ -1277,3 +1508,30 @@ def test_cli_setup_full_cycle(tmp_home, fake_codex, monkeypatch, capsys, no_cred
     code = manager.main(["uninstall", "--codex-home", str(tmp_home), "--json"])
     assert code == 0
     assert json.loads(capsys.readouterr().out)["status"] == "uninstalled"
+
+
+def test_cli_setup_accepts_custom_provider_profile(
+    tmp_home, fake_codex, monkeypatch, capsys, no_credentials
+):
+    monkeypatch.setenv("CODEX_DESKTOP_BIN", fake_codex)
+    code = manager.main(
+        [
+            "setup",
+            "--codex-home",
+            str(tmp_home),
+            "--skip-live-test",
+            "--base-url",
+            "https://cli.example/v1",
+            "--flash-model",
+            "cli-flash",
+            "--pro-model",
+            "cli-pro",
+            "--json",
+        ]
+    )
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "configured"
+    settings = json.loads((tmp_home / "deepseek-router" / "settings.json").read_text())
+    assert settings["base_url"] == "https://cli.example/v1"
+    assert settings["flash_model"] == "cli-flash"
+    assert settings["pro_model"] == "cli-pro"

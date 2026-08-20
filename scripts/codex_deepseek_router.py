@@ -40,6 +40,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+PACKAGE_DIR = Path(__file__).resolve().parents[1]
+if str(PACKAGE_DIR) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_DIR))
+
+from runtime.provider_config import (  # noqa: E402 - standalone manager bootstraps package root
+    DEFAULT_BASE_URL,
+    DEFAULT_FLASH_MODEL,
+    DEFAULT_PRO_MODEL,
+    ProviderConfigError,
+    RouterConfig,
+    load_router_config,
+    settings_payload,
+)
+
 try:
     import fcntl
 except ImportError:  # Windows
@@ -77,11 +91,12 @@ except ImportError:  # Python < 3.11 - str-mixin shim with identical behavior
 PROJECT_NAME = "codex-deepseek-router"
 FLASH_ROLE = "deepseek_flash"
 PRO_ROLE = "deepseek_pro"
-FLASH_MODEL = "deepseek-v4-flash"
-PRO_MODEL = "deepseek-v4-pro"
 PROVIDER = "deepseek"
-BASE_URL = "https://api.deepseek.com"
 WIRE_API = "responses"
+# Backward-compatible names for callers that only need the built-in defaults.
+FLASH_MODEL = DEFAULT_FLASH_MODEL
+PRO_MODEL = DEFAULT_PRO_MODEL
+BASE_URL = DEFAULT_BASE_URL
 HASH_VERSION_EXACT_BYTES = 2
 API_KEY_ENV = "DEEPSEEK_API_KEY"
 
@@ -190,6 +205,10 @@ class Paths:
     @property
     def manifest(self) -> Path:
         return self.state_dir / "manifest.json"
+
+    @property
+    def settings(self) -> Path:
+        return self.state_dir / "settings.json"
 
     @property
     def handoff_dir(self) -> Path:
@@ -1050,19 +1069,97 @@ def _provider_auth_block() -> str:
     return f'env_key = "{API_KEY_ENV}"\n'
 
 
-def agent_toml_text(spec: AgentSpec) -> str:
+def save_router_config(paths: Paths, config: RouterConfig) -> None:
+    atomic_write(
+        paths.settings,
+        (json.dumps(settings_payload(config), ensure_ascii=False, indent=2) + "\n").encode(),
+        mode=0o600,
+    )
+
+
+def _load_saved_router_config(paths: Paths) -> Optional[RouterConfig]:
+    try:
+        return load_router_config(paths.settings)
+    except ProviderConfigError as exc:
+        raise ManagerError("invalid_configuration", str(exc)) from exc
+
+
+def _legacy_router_config(paths: Paths) -> Optional[RouterConfig]:
+    if not paths.flash_agent.is_file() or not paths.pro_agent.is_file():
+        return None
+    try:
+        flash = load_toml(paths.flash_agent.read_text(encoding="utf-8"))
+        pro = load_toml(paths.pro_agent.read_text(encoding="utf-8"))
+        flash_provider = flash["model_providers"][PROVIDER]
+        pro_provider = pro["model_providers"][PROVIDER]
+        flash_url = str(flash_provider["base_url"]).rstrip("/")
+        pro_url = str(pro_provider["base_url"]).rstrip("/")
+        if flash_url.endswith("/responses"):
+            flash_url = flash_url[: -len("/responses")]
+        if pro_url.endswith("/responses"):
+            pro_url = pro_url[: -len("/responses")]
+        if flash_url != pro_url:
+            raise ManagerError(
+                "configuration_conflict",
+                "Legacy Flash and Pro Agent files use different base URLs.",
+                {"flash_base_url": flash_url, "pro_base_url": pro_url},
+            )
+        return RouterConfig(
+            base_url=flash_url,
+            flash_model=str(flash["model"]),
+            pro_model=str(pro["model"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ManagerError(
+            "configuration_conflict",
+            "Legacy Agent files do not contain a compatible router configuration.",
+        ) from exc
+
+
+def resolve_router_config(
+    paths: Paths,
+    *,
+    base_url: Optional[str] = None,
+    flash_model: Optional[str] = None,
+    pro_model: Optional[str] = None,
+) -> RouterConfig:
+    saved = _load_saved_router_config(paths)
+    if saved is None:
+        try:
+            saved = _legacy_router_config(paths) or RouterConfig()
+        except ManagerError as exc:
+            # An explicit complete profile is the only safe way to replace
+            # conflicting legacy files; partial overrides must not guess.
+            if exc.code != "configuration_conflict" or not all(
+                value is not None for value in (base_url, flash_model, pro_model)
+            ):
+                raise
+            saved = RouterConfig()
+    try:
+        return RouterConfig(
+            base_url=saved.base_url if base_url is None else base_url,
+            flash_model=saved.flash_model if flash_model is None else flash_model,
+            pro_model=saved.pro_model if pro_model is None else pro_model,
+        )
+    except ProviderConfigError as exc:
+        raise ManagerError("invalid_configuration", str(exc)) from exc
+
+
+def agent_toml_text(spec: AgentSpec, config: Optional[RouterConfig] = None) -> str:
+    config = config or RouterConfig()
+    model = config.flash_model if spec.role == FLASH_ROLE else config.pro_model
     instructions = _AGENT_INSTRUCTIONS[spec.role].strip()
     return (
         f'name = "{spec.role}"\n'
         f"description = {_toml_string(spec.description)}\n\n"
         f'model_provider = "{PROVIDER}"\n'
-        f'model = "{spec.model}"\n'
+        f'model = {_toml_string(model)}\n'
         f"model_context_window = 1000000\n"
         f'sandbox_mode = "{spec.sandbox_mode}"\n\n'
         f"developer_instructions = {_toml_string(instructions)}\n\n"
         f"[model_providers.{PROVIDER}]\n"
         f'name = "DeepSeek"\n'
-        f'base_url = "{BASE_URL}"\n'
+        f'base_url = {_toml_string(config.base_url)}\n'
         f'wire_api = "{WIRE_API}"\n'
         + _provider_auth_block()
     )
@@ -1073,28 +1170,35 @@ def agent_toml_text(spec: AgentSpec) -> str:
 # ---------------------------------------------------------------------------
 
 
-def catalog_payload() -> Dict[str, Any]:
+def catalog_payload(config: Optional[RouterConfig] = None) -> Dict[str, Any]:
+    config = config or RouterConfig()
+
     def entry(model: str, label: str, description: str) -> Dict[str, Any]:
+        roles = []
+        if model == config.flash_model:
+            roles.append(FLASH_ROLE)
+        if model == config.pro_model:
+            roles.append(PRO_ROLE)
         return {
             "slug": model,
             "name": label,
             "description": description,
             "model_provider": PROVIDER,
-            "base_url": BASE_URL,
+            "base_url": config.base_url,
             "wire_api": WIRE_API,
             "context_window": 1000000,
-            "router_roles": [role for role, candidate in SUPPORTED_ROLES.items() if candidate == model],
+            "router_roles": roles,
         }
 
     return {
         "models": [
             entry(
-                FLASH_MODEL,
+                config.flash_model,
                 "DeepSeek V4 Flash",
                 "Fast text-only DeepSeek model for bounded exploration, search, logs, extraction and pre-implementation analysis.",
             ),
             entry(
-                PRO_MODEL,
+                config.pro_model,
                 "DeepSeek V4 Pro",
                 "Deep text-only DeepSeek model for root cause, architecture, concurrency, review and difficult implementation.",
             ),
@@ -1186,7 +1290,7 @@ def managed_asset_paths(paths: Paths) -> Dict[str, Path]:
 
 def tracked_files(paths: Paths) -> List[Path]:
     """Every file the manager may write; all of them join the transaction snapshot."""
-    return [paths.config, paths.manifest, *managed_asset_paths(paths).values()]
+    return [paths.config, paths.manifest, paths.settings, *managed_asset_paths(paths).values()]
 
 
 def make_backup(paths: Paths) -> Path:
@@ -1287,11 +1391,19 @@ def _file_is_ours(path: Path, manifest: Dict[str, Any], manifest_hash_key: str) 
     return False
 
 
-def _assert_writable_target(path: Path, expected: bytes, manifest: Dict[str, Any], manifest_hash_key: str) -> bool:
+def _assert_writable_target(
+    path: Path,
+    expected: bytes,
+    manifest: Dict[str, Any],
+    manifest_hash_key: str,
+    restore_managed: bool = False,
+) -> bool:
     """Returns True when the target may be written (missing, ours, or adoptable)."""
     if not path.is_file():
         return True
     if _file_is_ours(path, manifest, manifest_hash_key):
+        return True
+    if restore_managed and manifest_hash_key in (manifest.get("hashes") or {}):
         return True
     if sha256_file(path) == sha256_bytes(expected):
         return True  # identical content: adopt
@@ -1303,13 +1415,21 @@ def _assert_writable_target(path: Path, expected: bytes, manifest: Dict[str, Any
 # ---------------------------------------------------------------------------
 
 
-def install_agent(paths: Paths, spec: AgentSpec, manifest: Dict[str, Any]) -> bool:
+def install_agent(
+    paths: Paths,
+    spec: AgentSpec,
+    manifest: Dict[str, Any],
+    config: Optional[RouterConfig] = None,
+    restore_managed: bool = False,
+) -> bool:
     """Write one agent TOML. Raises conflict on foreign content. Returns True when the file changed."""
     target = paths.agent_path(spec.role)
-    text = agent_toml_text(spec)
+    text = agent_toml_text(spec, config)
     data = text.encode()
     hash_key = "flash_agent" if spec.role == FLASH_ROLE else "pro_agent"
-    if target.is_file() and not _assert_writable_target(target, data, manifest, hash_key):
+    if target.is_file() and not _assert_writable_target(
+        target, data, manifest, hash_key, restore_managed
+    ):
         raise ManagerError(
             "conflict",
             f"Existing agent file differs from the router-managed target: {target}",
@@ -1321,10 +1441,17 @@ def install_agent(paths: Paths, spec: AgentSpec, manifest: Dict[str, Any]) -> bo
     return True
 
 
-def install_catalog(paths: Paths, manifest: Dict[str, Any]) -> bool:
+def install_catalog(
+    paths: Paths,
+    manifest: Dict[str, Any],
+    config: Optional[RouterConfig] = None,
+    restore_managed: bool = False,
+) -> bool:
     """Write the dual-model catalog. Foreign existing content is a conflict, never overwritten."""
-    data = (json.dumps(catalog_payload(), ensure_ascii=False, indent=2) + "\n").encode()
-    if paths.catalog.is_file() and not _assert_writable_target(paths.catalog, data, manifest, "catalog"):
+    data = (json.dumps(catalog_payload(config), ensure_ascii=False, indent=2) + "\n").encode()
+    if paths.catalog.is_file() and not _assert_writable_target(
+        paths.catalog, data, manifest, "catalog", restore_managed
+    ):
         raise ManagerError(
             "conflict",
             f"Existing model catalog differs from the router-managed target: {paths.catalog}",
@@ -1334,6 +1461,16 @@ def install_catalog(paths: Paths, manifest: Dict[str, Any]) -> bool:
         return False
     atomic_write(paths.catalog, data)
     return True
+
+
+def _legacy_catalog_is_router_owned(path: Path, config: RouterConfig) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload in (catalog_payload(), catalog_payload(config))
 
 
 def hook_entry_json(command: str, status_message: str) -> Dict[str, Any]:
@@ -1525,7 +1662,11 @@ def merge_hook_config(existing: Dict[str, Any], ours: Dict[str, Any], paths: Pat
     return merged, False
 
 
-def install_hook_files(paths: Paths, manifest: Dict[str, Any]) -> None:
+def install_hook_files(
+    paths: Paths,
+    manifest: Dict[str, Any],
+    restore_managed: bool = False,
+) -> None:
     """Copy the handoff helpers into the Codex home. Foreign files are conflicts."""
     source_dir = package_root() / "hooks"
     paths.hooks_install_dir.mkdir(parents=True, exist_ok=True)
@@ -1550,7 +1691,9 @@ def install_hook_files(paths: Paths, manifest: Dict[str, Any]) -> None:
         if not source.is_file():
             continue
         data = source.read_bytes()
-        if target.is_file() and not _assert_writable_target(target, data, manifest, hash_key):
+        if target.is_file() and not _assert_writable_target(
+            target, data, manifest, hash_key, restore_managed
+        ):
             raise ManagerError(
                 "conflict",
                 f"Existing hook script differs from the router-managed target: {target}",
@@ -1871,12 +2014,21 @@ def hook_files_installed(paths: Paths, manifest: Dict[str, Any]) -> bool:
     )
 
 
-def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[str, bool], bool]:
+def apply_managed_assets(
+    paths: Paths,
+    manifest: Dict[str, Any],
+    config: Optional[RouterConfig] = None,
+    restore_managed: bool = False,
+) -> Tuple[Dict[str, bool], bool]:
     """Install/refresh non-Plugin assets. Plugin Skills and Hooks stay in-place."""
     changed: Dict[str, bool] = {}
-    changed["catalog"] = install_catalog(paths, manifest)
-    changed["flash_agent"] = install_agent(paths, AGENT_SPECS[FLASH_ROLE], manifest)
-    changed["pro_agent"] = install_agent(paths, AGENT_SPECS[PRO_ROLE], manifest)
+    changed["catalog"] = install_catalog(paths, manifest, config, restore_managed)
+    changed["flash_agent"] = install_agent(
+        paths, AGENT_SPECS[FLASH_ROLE], manifest, config, restore_managed
+    )
+    changed["pro_agent"] = install_agent(
+        paths, AGENT_SPECS[PRO_ROLE], manifest, config, restore_managed
+    )
     handoff_paths = {
         key: path
         for key, path in managed_asset_paths(paths).items()
@@ -1886,7 +2038,7 @@ def apply_managed_assets(paths: Paths, manifest: Dict[str, Any]) -> Tuple[Dict[s
         key: sha256_file(path) if path.is_file() else None
         for key, path in handoff_paths.items()
     }
-    install_hook_files(paths, manifest)
+    install_hook_files(paths, manifest, restore_managed)
     changed["handoff_runtime"] = any(
         before[key] != sha256_file(path) for key, path in handoff_paths.items()
     )
@@ -1915,25 +2067,45 @@ def parent_config_snapshot(paths: Paths) -> Dict[str, Optional[str]]:
     }
 
 
-def agent_status(paths: Paths, manifest: Dict[str, Any], spec: AgentSpec) -> Dict[str, Any]:
+def agent_status(
+    paths: Paths,
+    manifest: Dict[str, Any],
+    spec: AgentSpec,
+    config: Optional[RouterConfig] = None,
+) -> Dict[str, Any]:
     target = paths.agent_path(spec.role)
     hash_key = "flash_agent" if spec.role == FLASH_ROLE else "pro_agent"
-    valid = target.is_file() and target.read_text(encoding="utf-8") == agent_toml_text(spec)
+    valid = target.is_file() and target.read_text(encoding="utf-8") == agent_toml_text(spec, config)
+    config = config or RouterConfig()
+    model = config.flash_model if spec.role == FLASH_ROLE else config.pro_model
     return {
         "installed": target.is_file(),
         "valid": valid,
         "managed": _file_is_ours(target, manifest, hash_key),
-        "model": spec.model,
+        "model": model,
     }
 
 
-def catalog_status(paths: Paths) -> Dict[str, Any]:
+def catalog_status(paths: Paths, config: Optional[RouterConfig] = None) -> Dict[str, Any]:
+    config = config or RouterConfig()
     registered = False
     if paths.catalog.is_file():
         try:
             data = json.loads(paths.catalog.read_text(encoding="utf-8"))
-            slugs = {item.get("slug") for item in data.get("models", [])}
-            registered = all(model in slugs for model in SUPPORTED_ROLES.values())
+            entries = {
+                item.get("slug"): item
+                for item in data.get("models", [])
+                if isinstance(item, dict)
+            }
+            registered = all(
+                entries.get(model, {}).get("base_url") == config.base_url
+                and entries.get(model, {}).get("wire_api") == config.wire_api
+                and role in entries.get(model, {}).get("router_roles", [])
+                for model, role in (
+                    (config.flash_model, FLASH_ROLE),
+                    (config.pro_model, PRO_ROLE),
+                )
+            )
         except (OSError, json.JSONDecodeError):
             registered = False
     return {"path": str(paths.catalog), "registered": registered}
@@ -1942,6 +2114,12 @@ def catalog_status(paths: Paths) -> Dict[str, Any]:
 def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, Any]:
     manifest = read_manifest(paths)
     installed = bool(manifest)
+    config_error: Optional[str] = None
+    try:
+        config = resolve_router_config(paths)
+    except ManagerError as exc:
+        config = RouterConfig()
+        config_error = str(exc)
     snapshot = parent_config_snapshot(paths)
     original = manifest.get("original") or {}
     parent_unchanged = (
@@ -1951,9 +2129,9 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
     )
 
     checks: Dict[str, Any] = {
-        "flash_agent": agent_status(paths, manifest, AGENT_SPECS[FLASH_ROLE]),
-        "pro_agent": agent_status(paths, manifest, AGENT_SPECS[PRO_ROLE]),
-        "catalog": catalog_status(paths),
+        "flash_agent": agent_status(paths, manifest, AGENT_SPECS[FLASH_ROLE], config),
+        "pro_agent": agent_status(paths, manifest, AGENT_SPECS[PRO_ROLE], config),
+        "catalog": catalog_status(paths, config),
     }
     legacy = legacy_hook_status(paths)
     plugin = plugin_status(paths)
@@ -1961,6 +2139,8 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
     assets_valid = runtime_assets_valid(paths, manifest)
     trusted = hook_trusted(paths, codex_bin)
     errors: List[str] = []
+    if config_error:
+        errors.append(config_error)
 
     codex_path: Optional[str] = None
     codex_version: Optional[str] = None
@@ -1992,6 +2172,7 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
             and assets_valid
             and credential_is_present
             and parent_unchanged
+            and not config_error
         )
         if manifest.get("disabled") or manifest.get("automatic_disabled"):
             status = "disabled"
@@ -2026,6 +2207,11 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
         provider={
             "registered": checks["flash_agent"]["valid"] and checks["pro_agent"]["valid"],
             "top_level_untouched": parent_unchanged,
+            "base_url": config.base_url,
+            "wire_api": config.wire_api,
+            "flash_model": config.flash_model,
+            "pro_model": config.pro_model,
+            "settings": str(paths.settings),
         },
         credential={"backend": credential_backend(), "present": credential_is_present},
         hook={
@@ -2074,6 +2260,9 @@ def setup(
     codex_bin: str,
     api_key_stdin: bool,
     skip_live_test: bool,
+    base_url: Optional[str] = None,
+    flash_model: Optional[str] = None,
+    pro_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     if not credential_present():
         if not api_key_stdin:
@@ -2088,8 +2277,23 @@ def setup(
         store_api_key(secret)
         secret = ""
 
+    config = resolve_router_config(
+        paths,
+        base_url=base_url,
+        flash_model=flash_model,
+        pro_model=pro_model,
+    )
     manifest = read_manifest(paths)
     previous = manifest or {}
+    if (
+        not manifest
+        and not paths.settings.is_file()
+        and _legacy_catalog_is_router_owned(paths.catalog, config)
+    ):
+        previous = {
+            "hash_version": HASH_VERSION_EXACT_BYTES,
+            "hashes": {"catalog": sha256_file(paths.catalog)},
+        }
     adopted: Dict[str, bool] = {
         "catalog": bool(paths.catalog.is_file()),
         "legacy_hook": legacy_hook_status(paths).get("recognized", False),
@@ -2108,7 +2312,10 @@ def setup(
             )
         # 4-6. Managed assets: catalog and both agents. Plugin Skills/Hooks are
         # discovered from the installed Plugin and are never copied globally.
-        changed, _ = apply_managed_assets(paths, previous)
+        changed, _ = apply_managed_assets(paths, previous, config)
+        previous_settings = paths.settings.read_bytes() if paths.settings.is_file() else None
+        save_router_config(paths, config)
+        changed["settings"] = previous_settings != paths.settings.read_bytes()
 
         new_manifest = default_manifest(snapshot["parent_model"], snapshot["parent_provider"])
         new_manifest["adopted_existing"].update(
@@ -2164,11 +2371,15 @@ def repair(paths: Paths, codex_bin: str) -> Dict[str, Any]:
     manifest = read_manifest(paths)
     if not manifest:
         raise ManagerError("not_managed", "No router manifest found. Run setup first.")
+    config = resolve_router_config(paths)
     manifest["disabled"] = False
     manifest["automatic_disabled"] = False
     backup = make_backup(paths)
     try:
-        changed, _ = apply_managed_assets(paths, manifest)
+        changed, _ = apply_managed_assets(paths, manifest, config, restore_managed=True)
+        previous_settings = paths.settings.read_bytes() if paths.settings.is_file() else None
+        save_router_config(paths, config)
+        changed["settings"] = previous_settings != paths.settings.read_bytes()
         manifest["adopted_existing"] = manifest.get("adopted_existing", {})
         manifest["hashes"] = compute_asset_hashes(paths)
         manifest["hash_version"] = HASH_VERSION_EXACT_BYTES
@@ -2676,8 +2887,10 @@ def run_tests(paths: Paths, codex_bin: str) -> Dict[str, Any]:
             "hook_untrusted",
             "The Plugin Hook has not been reviewed yet. Codex normally shows its review UI; use /hooks in the interactive CLI only as a fallback, then run test again.",
         )
+    config = resolve_router_config(paths)
     results: Dict[str, Any] = {}
-    for role, model in SUPPORTED_ROLES.items():
+    models = {FLASH_ROLE: config.flash_model, PRO_ROLE: config.pro_model}
+    for role, model in models.items():
         results[role] = native_spawn_smoke(paths, codex_bin, role, model)
     manifest = read_manifest(paths)
     manifest["last_test"] = {
@@ -2709,6 +2922,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-home")
     parser.add_argument("--api-key-stdin", action="store_true")
     parser.add_argument("--skip-live-test", action="store_true")
+    parser.add_argument("--base-url")
+    parser.add_argument("--flash-model")
+    parser.add_argument("--pro-model")
     parser.add_argument("--remove-credential", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser
@@ -2731,6 +2947,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(raw_argv)
     paths = resolve_paths(args.codex_home)
     try:
+        if args.command != "setup" and any(
+            value is not None for value in (args.base_url, args.flash_model, args.pro_model)
+        ):
+            raise ManagerError(
+                "invalid_configuration",
+                "--base-url, --flash-model and --pro-model are only valid with setup.",
+            )
         codex_bin: Optional[str] = None
         if args.command in {"status", "setup", "repair", "test", "doctor"}:
             try:
@@ -2746,7 +2969,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             with operation_lock(paths):
                 if args.command == "setup":
-                    payload = setup(paths, codex_bin or "", args.api_key_stdin, args.skip_live_test)
+                    payload = setup(
+                        paths,
+                        codex_bin or "",
+                        args.api_key_stdin,
+                        args.skip_live_test,
+                        base_url=args.base_url,
+                        flash_model=args.flash_model,
+                        pro_model=args.pro_model,
+                    )
                 elif args.command == "repair":
                     payload = repair(paths, codex_bin or "")
                 elif args.command == "test":

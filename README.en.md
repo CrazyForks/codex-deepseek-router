@@ -223,6 +223,37 @@ Every command accepts `--json` and `--codex-home`. Exit codes: `0` means
 ready/configured, `2` means user action is required, `3` means timeout, and `1`
 means an unexpected failure.
 
+### Custom endpoints and model IDs
+
+User configuration is persisted at `$CODEX_HOME/deepseek-router/settings.json`,
+outside the Plugin cache. `base_url` is the API root and must not include
+`/responses`; the router requests `{base_url}/responses` automatically.
+
+```bash
+python3 scripts/codex_deepseek_router.py setup \
+  --base-url https://api.qnaigc.com/bypass/openai/v1 \
+  --flash-model deepseek-v4-flash-0731 \
+  --pro-model deepseek-v4-pro-0813
+```
+
+Local OpenAI-compatible gateway example:
+
+```bash
+python3 scripts/codex_deepseek_router.py setup \
+  --base-url http://127.0.0.1:8001/openai/v1 \
+  --flash-model v4-flash-0731 \
+  --pro-model v4-pro-0813
+```
+
+The gateway must support the OpenAI Responses API. The router sends `POST
+{base_url}/responses`.
+
+Each option can be updated independently; omitted fields keep their saved values.
+`repair` rebuilds the Agent TOMLs, `models.json`, and related runtime assets from
+`settings.json` without restoring default endpoint or model IDs. Uninstalling the
+Codex Plugin itself does not remove this settings file; `router uninstall` removes
+it as part of the router's cleanup semantics.
+
 <details>
 <summary><strong>Install from source and verify manually</strong></summary>
 

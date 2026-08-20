@@ -4,7 +4,8 @@
 
 DeepSeek children receive the assignment text, related code context and tool
 results; that data is transmitted to the DeepSeek provider
-(`https://api.deepseek.com`). The router never places `.env` files, tokens,
+(`https://api.deepseek.com` by default, or the user-configured `base_url`).
+Users are responsible for trusting and securing a custom endpoint. The router never places `.env` files, tokens,
 passwords, authentication headers, SSH keys or private keys into a handoff,
 and the runtime skill keeps sensitive or `VISION_CRITICAL` work in the
 parent. See

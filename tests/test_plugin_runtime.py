@@ -181,6 +181,33 @@ def test_client_returns_structured_result(monkeypatch):
     assert result["usage"]["input_tokens"] == 3
 
 
+def test_client_uses_persisted_base_url_and_model_ids(monkeypatch, tmp_path):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    settings_dir = tmp_path / "deepseek-router"
+    settings_dir.mkdir()
+    (settings_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "base_url": "http://127.0.0.1:8001/openai/v1",
+                "flash_model": "v4-flash-0731",
+                "pro_model": "v4-pro-0813",
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen = {}
+
+    def opener(request, timeout):
+        seen["url"] = request.full_url
+        return FakeResponse()
+
+    result = DeepSeekClient("flash", opener=opener).complete("inspect")
+    assert result["model"] == "v4-flash-0731"
+    assert seen["url"] == "http://127.0.0.1:8001/openai/v1/responses"
+
+
 def test_structured_extracts_json_after_provider_preamble():
     value = _structured('I should return JSON only.\n{"summary":"ok","findings":[]}')
     assert value == {"summary": "ok", "findings": []}

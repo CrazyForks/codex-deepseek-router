@@ -204,6 +204,36 @@ DeepSeek 子 Agent 只接收文本。截图、图片和视频必须先由 Codex 
 所有命令支持 `--json` 与 `--codex-home`。退出码：`0` 表示
 ready/configured，`2` 表示需要人工处理，`3` 表示超时，`1` 表示意外失败。
 
+### 自定义 endpoint 与 model ID
+
+Router 将用户配置持久化在 `$CODEX_HOME/deepseek-router/settings.json`，不保存在
+Plugin cache 中。`base_url` 是 API 根地址，不要包含 `/responses`；Router 会自动
+请求 `{base_url}/responses`。
+
+```bash
+python3 scripts/codex_deepseek_router.py setup \
+  --base-url https://api.qnaigc.com/bypass/openai/v1 \
+  --flash-model deepseek-v4-flash-0731 \
+  --pro-model deepseek-v4-pro-0813
+```
+
+本地 OpenAI-compatible 网关示例：
+
+```bash
+python3 scripts/codex_deepseek_router.py setup \
+  --base-url http://127.0.0.1:8001/openai/v1 \
+  --flash-model v4-flash-0731 \
+  --pro-model v4-pro-0813
+```
+
+网关必须支持 OpenAI Responses API；Router 实际发送 `POST
+{base_url}/responses`。
+
+三个参数都可以单独更新；未传入的字段会沿用已保存值。`repair` 会从
+`settings.json` 重新生成 Agent TOML、`models.json` 和相关运行时，不会恢复默认
+endpoint 或 model ID。Codex Desktop 卸载/重新安装 Plugin 不会删除该 settings 文件；
+执行 `router uninstall` 才会按清理语义删除它。
+
 <details>
 <summary><strong>从源码安装与手动验收</strong></summary>
 
