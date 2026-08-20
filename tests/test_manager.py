@@ -392,7 +392,7 @@ def test_hook_trusted_accepts_trusted_managed_plugin_cache(paths, fake_codex, mo
     """Desktop reports the installed Plugin cache path, not this checkout."""
     cached = _runtime_hook_metadata(
         paths,
-        sourcePath="/Users/test/.codex/plugins/cache/deepseek-router/0.2.0/hooks/hooks.json",
+        sourcePath="/Users/test/.codex/plugins/cache/deepseek-router/0.3.0/hooks/hooks.json",
         source="plugin",
         pluginId="codex-deepseek-router@deepseek-router",
     )

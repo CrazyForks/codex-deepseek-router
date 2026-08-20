@@ -1,6 +1,6 @@
 {
   "name": "codex-deepseek-router",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Use DeepSeek Flash and Pro as Codex subagents with automatic routing.",
   "author": {
     "name": "codex-deepseek-router contributors",
