@@ -70,14 +70,20 @@ renders the same blocks around its bounded task context.
 The parent assignment is the source of completion semantics. Delegated
 assignments should include `ACCEPTANCE CRITERIA`, `VERIFICATION OWNER`, and a
 `STOPPING CONDITION` in their text without adding fields to the envelope. REACT
-children implement the smallest coherent solution that can satisfy those
-criteria, verify the criteria within their capability, and surface
-parent-owned criteria instead of treating a merely runnable artifact as done.
+children implement a complete, robust, idiomatic solution within scope, verify
+the criteria within their capability, and surface parent-owned criteria instead
+of treating a merely runnable artifact as done. Complex Pro assignments may
+explicitly require one bounded QUALITY CLOSURE after the first functional pass;
+ordinary Pro assignments are not forced through that extra review.
 
 The Codex parent remains the acceptance gate: it checks the actual artifact,
 tests, runtime output, or visual evidence available to it. Missing visual
-evidence is `UNVERIFIED`, never an implied pass. A material gap may trigger at
-most one bounded Pro + REACT follow-up; optional polish does not. This is the
+evidence is `UNVERIFIED`, never an implied pass. Only a successful `completed`
+child result enters the normal gate; BLOCKED, interrupted, cancelled, and failed
+results are not successful completion. Partial workspace edits are progress,
+not completion, and the parent must not duplicate, overwrite, or take over an
+active Pro assignment. An objective material engineering gap may trigger at
+most one bounded Pro + REACT follow-up; subjective polish does not. This is the
 project's information-driven convergence extension, not a new policy, schema
 field, transport state, or DSH-native capability.
 
@@ -87,7 +93,7 @@ Evidence Packet or maps only the provider's returned structured summary,
 findings and evidence into the required packet fields. Native Hook children
 retain conditional SPEC-Lite escalation.
 
-`REASONING_ADAPTER_VERSION = 6` is recorded by the evaluation harness. The
+`REASONING_ADAPTER_VERSION = 7` is recorded by the evaluation harness. The
 Adapter does not add Standard/Spec surfaces, weak/mixed policies, keyword
 classification, or any child self-routing.
 

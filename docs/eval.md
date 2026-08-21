@@ -88,9 +88,39 @@ runs follow only after smoke correctness passes.
 
 Flash and Pro results are analyzed separately. The key comparison for Flash is
 B→C: does tuning reduce repeated work, environment ceremony or unbounded
-search without harming correctness? For Pro, B and C are equal in adapter v5;
+search without harming correctness? For Pro, B and C are equal in adapter v7;
 generic Pro tuning was removed rather than retained for symmetry. A useful
 FAST stop condition does not justify a DEEP contract that lowers correctness.
+
+## Native Complex Pro Quality Closure Evaluation
+
+Prompt-only tests do not establish the native quality behavior. Run complex
+cases through the real `stage → SubagentStart → spawn_agent → callback` path.
+Compare A (current main) with B (Complex Pro assignments that explicitly
+require one bounded QUALITY CLOSURE); keep the fixed DSH checkout as a separate
+reference only after A/B is informative. The current pinned reference is
+`dsh-routing-suite@d924ed0` with preset `eff787e` and injector `f4ef59f`; if the
+benchmark checkout changes, record the exact commits used. Do not use duration
+as a release gate.
+
+At minimum, record:
+
+- `first_functional_pass_at` — the first successful test/build/runtime check
+  directly related to the assignment after the first code edit;
+- meaningful post-first-pass actions, post-pass material fixes, and
+  re-verification;
+- child final status (`completed`, `BLOCKED`, `interrupted`, `cancelled`, or
+  `failed`), parent follow-up, parent manual rework, final correctness, and
+  remaining material gaps;
+- tool calls, reads, duplicate reads, edits, verification runs/failures, and
+  child duration as observational telemetry only.
+
+A successful Quality Closure requires a concrete post-pass action that inspects
+the affected integration/edge/failure/regression surface, fixes a material gap
+when one exists, and reruns the affected verification. Repeated `ls`, `git
+status`, or duplicate reads do not count. Complex UI/state, cross-module
+backend, and non-obvious bug-fix cases should be represented; ordinary Pro
+tasks must remain fast and must not inherit the closure requirement.
 
 ## Evidence Packet evaluation
 

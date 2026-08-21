@@ -137,7 +137,7 @@ function Get-ReasoningContext([string]$Agent, [string]$ReasoningPolicy) {
             if ($Agent -eq "deepseek_flash") {
                 "Locate the exact change and its constraints, map the assignment's acceptance criteria, then return a precise read-only proposal with affected files, patch or diff, suggested tests, and a clear split between child-verifiable and parent-owned criteria. Do not modify the workspace or claim that a proposed edit or verification was executed."
             } else {
-                "Understand the requested result and only the context needed to implement the smallest coherent solution that can satisfy the assignment. Implement it, run functional verification, check the explicit acceptance criteria within your capability, report parent-owned criteria as unverified, fix resulting failures, and stop once child-verifiable criteria are satisfied and remaining parent-owned criteria are surfaced. Do not widen scope or build frameworks, scaffolding, or ceremony the parent did not request."
+                "Stay within the requested scope. Understand the requested result and relevant context. Implement a complete, robust, idiomatic solution within scope. Run functional verification, check child-verifiable criteria, report parent-owned criteria as unverified, and fix failures. Run QUALITY CLOSURE only when the assignment explicitly requires QUALITY CLOSURE: after the first relevant verification passes, review the resulting diff for integration points, edge/failure paths, regression risks, project conventions/invariants, and introduced workarounds or TODOs. Fix only material issues and rerun affected verification. Do not stop merely because the first functionally passing implementation exists. Do not widen scope into unrelated refactoring, speculative abstractions, optional polish, frameworks, scaffolding, or ceremony. Stop when the requested result and any required closure are verified with no concrete material gap, or report BLOCKED."
             }
         }
         "SPEC" {
@@ -163,7 +163,7 @@ function Get-ReasoningContext([string]$Agent, [string]$ReasoningPolicy) {
             if ($Agent -eq "deepseek_flash") {
                 "Stop when the read-only proposal covers the requested result, maps the acceptance criteria, and clearly surfaces child-verifiable versus parent-owned verification. Do not claim that the implementation or its tests were executed."
             } else {
-                "Stop when the requested result is implemented, child-verifiable acceptance criteria are satisfied, and any remaining parent-owned criteria are explicitly surfaced for parent verification. Do not mistake a partial implementation or a merely runnable artifact for completion."
+                "Stop when the requested result is implemented, child-verifiable acceptance criteria are satisfied, and any remaining parent-owned criteria are explicitly surfaced for parent verification. If the assignment explicitly requires QUALITY CLOSURE, complete one bounded review after the first relevant functional verification pass, fix concrete material issues, and rerun affected verification. Do not mistake a partial implementation or a merely runnable artifact for completion; stop when no concrete material gap remains."
             }
         }
         "SPEC" {

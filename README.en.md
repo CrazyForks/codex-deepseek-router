@@ -142,10 +142,18 @@ assignment should state `ACCEPTANCE CRITERIA`, `VERIFICATION OWNER`, and a
 `STOPPING CONDITION`. REACT must satisfy the material criteria the child can
 verify and surface parent-owned criteria such as screenshot or final visual
 quality checks; “the page runs” is not acceptance by itself. The parent checks
-the actual artifact and evidence, and issues at most one bounded `Pro + REACT`
-follow-up only for a material gap that directly violates an explicit user
-requirement. Without visual evidence, the result is `UNVERIFIED`, never an
-invented quality pass.
+the actual artifact and evidence. It issues at most one bounded `Pro + REACT`
+follow-up only for an objective material engineering gap affecting correctness,
+required user-visible behavior, integration, robustness, regression risk,
+security/invariants, or concrete maintainability. Subjective polish and
+unrelated refactoring do not trigger follow-up. Without visual evidence, the
+result is `UNVERIFIED`, never an invented quality pass.
+
+For an explicitly Complex Pro implementation, the assignment may require one
+bounded `QUALITY CLOSURE`: after the first relevant functional verification
+passes, inspect integration, edge/failure paths, and regression risks, fix only
+material issues, and rerun the affected verification. Ordinary Pro work remains
+fast and does not inherit this requirement.
 
 This information-driven, acceptance-criteria-driven completion adds no fifth
 policy, acceptance-profile schema field, or transport state machine; ordinary

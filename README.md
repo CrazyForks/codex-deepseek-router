@@ -132,9 +132,14 @@ Router 优化的是有用收敛，而不是最低运行时间。每个委托 ass
 写出 `ACCEPTANCE CRITERIA`、`VERIFICATION OWNER` 和 `STOPPING CONDITION`。
 REACT 子 Agent 必须满足自己能够验证的关键条件，并把父 Agent 才能判断的条件
 （例如截图或最终视觉质量）明确暴露；页面能运行不等于任务已验收。父 Agent
-会检查真实产物和证据，只有直接违反用户明确要求的 material gap 才会触发一次
-有边界的 `Pro + REACT` 跟进，之后如实报告剩余限制。没有真实视觉证据时，结论
+会检查真实产物和证据。只有具有客观工程影响的 material gap（正确性、用户可见行为、
+集成、健壮性、回归风险、安全/不变量或具体可维护性风险）才会触发一次有边界的
+`Pro + REACT` 跟进；主观 polish 和无关重构不会触发。没有真实视觉证据时，结论
 标记为 `UNVERIFIED`，不会伪造通过。
+
+对于明确标记为 Complex Pro 的实现任务，assignment 可以要求一次 bounded
+`QUALITY CLOSURE`：第一次相关功能验证通过后检查 integration、edge/failure paths
+和 regression risks，只修复 material issues 并重新验证。普通 Pro 任务仍保持快速闭环。
 
 这套“信息驱动收敛 + Acceptance Criteria 驱动完成”不新增第五个 Policy、
 Acceptance Profile schema 字段或 transport 状态机；普通功能任务仍保持快速收敛。

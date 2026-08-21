@@ -27,7 +27,7 @@ def test_flash_deep_is_rejected_with_actionable_error():
 
 
 def test_adapter_has_one_version_and_four_parent_selected_policies():
-    assert reasoning.REASONING_ADAPTER_VERSION == 6
+    assert reasoning.REASONING_ADAPTER_VERSION == 7
     assert set(reasoning.VALID_ROUTE_MATRIX) == {"deepseek_flash", "deepseek_pro"}
     assert reasoning.POLICIES == {"FAST", "REACT", "SPEC", "DEEP"}
     assert "weak" not in reasoning.POLICIES
@@ -50,10 +50,22 @@ def test_pro_react_is_acceptance_driven_not_minimum_runtime_driven():
     contract = reasoning.get_policy_contract("deepseek_pro", "REACT")
     stop = reasoning.get_stop_condition("deepseek_pro", "REACT")
     assert "requested result" in contract
+    assert "complete" in contract
+    assert "robust" in contract
+    assert "idiomatic" in contract
+    assert "QUALITY CLOSURE" in contract
+    for marker in ("integration", "edge", "failure", "regression", "material"):
+        assert marker in contract
+    assert "only when the assignment explicitly requires QUALITY CLOSURE" in contract
+    assert "unrelated refactoring" in contract
+    assert "speculative abstractions" in contract
+    assert "optional polish" in contract
+    assert "smallest coherent solution" not in contract
     assert "child-verifiable" in contract
     assert "parent-owned criteria" in contract
     assert "merely runnable artifact" in stop
-    assert "smallest coherent change or proposal is complete" not in stop
+    assert "QUALITY CLOSURE" in stop
+    assert "concrete material gap" in stop
 
 
 def test_flash_spec_lite_escalates_deep_work_with_evidence():

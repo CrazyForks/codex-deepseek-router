@@ -39,8 +39,8 @@ def test_flash_dry_run_renders_three_ablation_prompts():
     assert len({record["prompt_sha256"] for record in records}) == 3
     assert all(record["success"] is None for record in records)
     assert records[0]["adapter_version"] == 0
-    assert records[1]["adapter_version"] == 6
-    assert records[2]["adapter_version"] == 6
+    assert records[1]["adapter_version"] == 7
+    assert records[2]["adapter_version"] == 7
     assert records[1]["added_guidance_chars"] != records[2]["added_guidance_chars"]
 
 

@@ -28,7 +28,7 @@ blocks without asking the child to ignore higher-priority instructions.
 
 Flash receives a short reminder to use supplied evidence directly, obey
 requested output and honesty constraints, and do extra discovery only when a
-missing fact blocks the answer. Pro receives no generic model tuning in adapter version 6. Its behavior
+missing fact blocks the answer. Pro receives no generic model tuning in adapter version 7. Its behavior
 comes from the parent-selected execution contract and stop condition. This
 matches the pinned source's warning that extra recall/converge and few-shot
 anchors can hurt Pro, while preserving this project's stronger semantic parent
@@ -55,8 +55,16 @@ Assignments now carry `ACCEPTANCE CRITERIA`, `VERIFICATION OWNER`, and a
 making the requested result explicit. The REACT contract requires the child to
 verify child-owned criteria and surface parent-owned criteria; the parent
 checks actual artifacts and may issue at most one bounded Pro + REACT
-follow-up for a material gap. Missing visual evidence is reported as
-`UNVERIFIED` rather than guessed.
+follow-up for an objective material gap. Missing visual evidence is reported as
+`UNVERIFIED` rather than guessed. Native terminal events are not completion by
+themselves: only a successful `completed` result enters the normal gate;
+`BLOCKED`, `interrupted`, `cancelled`, and `failed` results cannot PASS.
+
+Complex Pro + REACT assignments may add one assignment-driven `QUALITY CLOSURE`
+after the first functional verification pass. That bounded pass checks relevant
+integration points, edge/failure paths, regression risks, conventions/invariants,
+and concrete workarounds or TODOs, then fixes only material issues and reruns
+verification. Ordinary Pro assignments keep their fast functional closure.
 
 This is the project's information-driven convergence extension, inspired by
 the DSH emphasis on information completeness. It is not a DSH-native

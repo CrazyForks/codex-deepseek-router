@@ -65,17 +65,32 @@ Choose `deepseek_pro` for:
 - security
 - cross-module reasoning
 - complex review
-- implementation (simple or difficult)
+- complex implementation with multiple integration points, state/data flow,
+  non-obvious bugs, or meaningful regression surface
+
+Keep these implementation boundaries explicit:
+
+- The parent handles trivial deterministic edits, tiny obvious fixes, and small
+  mechanical single-file changes.
+- Ordinary Pro + REACT handles clear, non-trivial implementation with a limited
+  integration surface and a directly verifiable functional closure.
+- Complex Pro + REACT handles cross-module implementation, complex UI/state/data
+  flow, non-obvious edit-dependent bugs, bounded refactors, or high regression
+  surface. Once the parent makes that classification, its assignment **must**
+  include `QUALITY CLOSURE` and the bounded verification target.
 
 Do not delegate trivial work whose handoff cost exceeds its value.
 
 ## Step 3 — Policy
 
 - `FAST`: minimum investigation -> result -> stop. (Flash)
-- `REACT`: understand the requested result -> implement the smallest coherent
-  solution that can satisfy the assignment -> test -> check child-verifiable
-  acceptance criteria -> fix -> converge. (Pro for implementation; Flash may
-  prepare the change as a read-only proposal)
+- `REACT`: understand the requested result -> implement a complete, robust,
+  idiomatic solution within scope -> test -> check child-verifiable acceptance
+  criteria -> fix -> converge. Every Complex Pro + REACT assignment must
+  require one bounded `QUALITY CLOSURE` after the first functional verification
+  pass; ordinary Pro assignments remain fast and do not receive this requirement
+  implicitly. (Pro for implementation; Flash may prepare the change as a
+  read-only proposal)
 - `SPEC`: inspect -> trace -> hypothesis -> evidence -> root cause ->
   smallest fix -> verify. (Pro; Flash may run a SPEC-Lite exploration)
 - `DEEP`: system model -> invariants -> failure modes -> alternatives ->
@@ -116,6 +131,19 @@ CHILD | PARENT | SHARED
 
 STOPPING CONDITION
 ...
+```
+
+For every assignment the parent classifies as Complex Pro + REACT, include this
+assignment-driven section; do not omit it after deciding the task is complex:
+
+```text
+QUALITY CLOSURE
+After the first relevant functional verification passes, perform one bounded
+review of the resulting diff. Inspect relevant integration points, edge and
+failure paths, concrete regression risks, project conventions/invariants, and
+workarounds or TODOs introduced by the change. Fix only concrete material issues
+and rerun affected verification. Do not expand into unrelated refactoring,
+speculative abstractions, optional polish, or a second refinement loop.
 ```
 
 `ACCEPTANCE CRITERIA` state what must be true for the requested result to be
@@ -248,24 +276,45 @@ yourself and re-dispatch with the missing facts; do not let the child guess.
 
 ## Parent acceptance gate
 
-When the child returns, the parent verifies the assignment rather than merely
-accepting the child's completion summary:
+Native terminal events are lifecycle boundaries, not proof of success. The
+parent distinguishes `completed`, `BLOCKED`, `interrupted`, `cancelled`, and
+`failed`:
 
-1. Check the actual artifact, tests, runtime output, or other evidence that is
+- Only a successful `completed` result enters the normal Acceptance Gate.
+- `BLOCKED` is handled as missing information or an honest limitation and must
+  not be normally accepted; it must not be treated as successful completion.
+- `interrupted` and `cancelled` are not successful completion and must not PASS;
+  they must not be treated as successful completion.
+- `failed` follows runtime/transport failure handling and must not PASS; it must
+  not be treated as successful completion.
+
+When a successful child returns, the parent verifies the assignment rather than
+merely accepting the child's completion summary:
+
+1. Check the actual artifact, diff, tests, runtime output, and other evidence
    available to the parent.
-2. Mark parent-owned criteria `UNVERIFIED` when the required evidence (for
-   example, a browser render or screenshot) is not available. Do not claim
-   visual or quality acceptance without that evidence.
-3. Finish when all material criteria are satisfied or an honest blocked/
-   unverifiable limitation is reported.
-4. Only when a material gap directly violates an explicit user requirement,
-   issue one additional bounded `deepseek_pro + REACT` assignment. Do not
-   follow up for optional polish, extra parameters, or subjective tweaks the
-   user did not request.
+2. Mark parent-owned criteria `UNVERIFIED` when required evidence (for example,
+   a browser render or screenshot) is unavailable. Do not claim visual or
+   quality acceptance without that evidence.
+3. Treat partial workspace edits as progress, not completion. While a Pro is
+   active, the parent must not duplicate, overwrite, or take over the child's
+   assignment responsibility merely because a functional outline is visible.
+   The rule is `NO duplicate`, `NO overwrite`, `NO takeover`; it is not a file
+   lock. The parent may do unrelated, non-conflicting work, and may respond to
+   user cancellation, changed requirements, a child `BLOCKED` result, a real
+   runtime failure, or a real timeout.
+4. A gap is material only when it has an objective impact on at least one of:
+   correctness, required user-visible behavior, integration, robustness,
+   regression risk, security / invariant, or concrete maintainability risk.
+   subjective polish, personal style, speculative abstractions, unrelated
+   refactoring, and optional parameters are not material gaps.
+5. Finish with PASS when all material criteria are satisfied or report an honest
+   blocked/unverifiable limitation. If an objective material engineering gap
+   remains, issue one additional bounded `deepseek_pro + REACT` assignment.
 
-The automatic follow-up allowance is at most one. After the second parent
-review, stop and report any remaining limitation; no runtime retry counter or
-follow-up state machine is added.
+The automatic follow-up maximum = 1 (at most one follow-up). After the second parent review, stop and
+report any remaining limitation; no runtime retry counter or follow-up state
+machine is added.
 
 Use this structure for that one follow-up:
 

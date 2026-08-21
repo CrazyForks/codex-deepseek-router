@@ -20,6 +20,50 @@ def test_skill_requires_acceptance_sections_and_parent_gate():
         "MATERIAL GAPS",
         "DO NOT CHANGE",
         "deepseek_pro + REACT",
+        "completed",
+        "BLOCKED",
+        "interrupted",
+        "cancelled",
+        "failed",
+        "partial workspace edits",
+        "NO duplicate",
+        "NO overwrite",
+        "NO takeover",
+        "objective material engineering gap",
+    ):
+        assert marker in SKILL
+
+
+def test_parent_gate_only_accepts_successful_completed_child_results():
+    assert "Only a successful `completed` result enters the normal Acceptance Gate" in SKILL
+    for status in ("BLOCKED", "interrupted", "cancelled", "failed"):
+        assert f"`{status}`" in SKILL
+    assert "must not be treated as successful completion" in SKILL
+
+
+def test_materiality_gate_excludes_subjective_polish_and_bounds_follow_up():
+    for marker in (
+        "correctness",
+        "required user-visible behavior",
+        "integration",
+        "robustness",
+        "regression risk",
+        "security / invariant",
+        "concrete maintainability risk",
+        "subjective polish",
+        "automatic follow-up maximum = 1",
+    ):
+        assert marker in SKILL
+
+
+def test_complex_pro_dispatch_must_carry_quality_closure():
+    for marker in (
+        "parent handles trivial deterministic edits",
+        "Ordinary Pro + REACT handles clear, non-trivial implementation",
+        "Complex Pro + REACT handles cross-module implementation",
+        "assignment **must**\n  include `QUALITY CLOSURE`",
+        "Every Complex Pro + REACT assignment must",
+        "do not omit it after deciding the task is complex",
     ):
         assert marker in SKILL
 

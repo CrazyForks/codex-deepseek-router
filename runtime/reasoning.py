@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Optional
 
 
-REASONING_ADAPTER_VERSION = 6
+REASONING_ADAPTER_VERSION = 7
 
 FLASH_AGENT = "deepseek_flash"
 PRO_AGENT = "deepseek_pro"
@@ -26,12 +26,16 @@ FAST_CONTRACT = (
 )
 
 PRO_REACT_CONTRACT = (
-    "Understand the requested result and only the context needed to implement the smallest coherent "
-    "solution that can satisfy the assignment. Implement it, run functional verification, check the "
-    "explicit acceptance criteria within your capability, report parent-owned criteria as unverified, "
-    "fix resulting failures, and stop once child-verifiable criteria are satisfied and remaining "
-    "parent-owned criteria are surfaced. Do not widen scope or build frameworks, scaffolding, or "
-    "ceremony the parent did not request."
+    "Stay within the requested scope. Understand the requested result and relevant context. Implement a complete, robust, idiomatic "
+    "solution within scope. Run functional verification, check child-verifiable criteria, report "
+    "parent-owned criteria as unverified, and fix failures. Run QUALITY CLOSURE only when the "
+    "assignment explicitly requires QUALITY CLOSURE: after the first relevant verification passes, "
+    "review the resulting diff for integration points, edge/failure paths, regression risks, "
+    "project conventions/invariants, and introduced workarounds or TODOs. Fix only material issues "
+    "and rerun affected verification. Do not stop merely because the first functionally passing implementation exists. Do not widen scope into "
+    "unrelated refactoring, speculative abstractions, optional polish, frameworks, scaffolding, or "
+    "ceremony. Stop when the requested result and any required closure are verified with no concrete "
+    "material gap, or report BLOCKED."
 )
 
 FLASH_REACT_CONTRACT = (
@@ -73,10 +77,11 @@ PRO_TUNING_MINIMAL = ""
 STOP_CONDITIONS = {
     "FAST": "Stop when direct evidence supports the answer and no unresolved issue can materially change it.",
     "REACT": (
-        "Stop when the requested result is implemented, child-verifiable acceptance criteria are "
-        "satisfied, and any remaining parent-owned criteria are explicitly surfaced for parent "
-        "verification. Do not mistake a partial implementation or a merely runnable artifact for "
-        "completion."
+        "Stop when the requested result is implemented, child-verifiable criteria are satisfied, "
+        "and parent-owned criteria are surfaced. If the assignment requires QUALITY CLOSURE, "
+        "complete one bounded post-pass, fix concrete material issues, and rerun affected "
+        "verification. A partial or merely runnable artifact is not completion; stop when no "
+        "concrete material gap remains."
     ),
     "SPEC": "Stop after one root cause is supported, material alternatives are eliminated, and the fix or recommendation is verified where possible.",
     "DEEP": "Stop when information is sufficient to distinguish the main alternatives and further analysis would add completeness without changing the decision.",
