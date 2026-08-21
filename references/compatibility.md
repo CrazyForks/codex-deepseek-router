@@ -4,7 +4,7 @@
 
 | Platform | Credential backend | Agent TOML auth | Verified live smoke |
 |---|---|---|---|
-| macOS | Keychain (Security.framework) | same-Python Keychain helper (generated at install) | Codex CLI `0.148.0-alpha.9` (this machine), oil-oil baseline |
+| macOS | Keychain (Security.framework) | same-Python Keychain helper (generated at install) | Native `0.148.0`; `direct_codex` Desktop `0.149.0-alpha.4` |
 | Windows | Credential Manager | `env_key = "DEEPSEEK_API_KEY"` | Utopia-V baseline: Windows Desktop `26.727.6591.0` |
 | Linux | `DEEPSEEK_API_KEY` env var | `env_key` | protocol/static tests; live smoke recommended |
 
@@ -36,19 +36,33 @@ Default `CODEX_HOME` is `~/.codex`:
 
 | Component | Evidence |
 |---|---|
-| Codex CLI | `0.148.0-alpha.9` (macOS desktop bundle, this machine) |
+| Codex CLI | Native: `0.148.0`; Desktop compatibility: `0.149.0-alpha.4` |
 | Windows Codex Desktop | `26.727.6591.0` (Utopia-V live baseline) |
 | DeepSeek models | `deepseek-v4-flash`, `deepseek-v4-pro`, Responses API |
-| Transport | V2 + `fork_turns="none"` + `SubagentStart` plaintext hook |
+| Transport | ≤0.148: V2 + `fork_turns="none"` + plaintext Hook; ≥0.149: `direct_codex` |
 | Parent isolation | installer never writes config.toml (stronger than oil-oil's V1 workaround, which we deliberately do not copy) |
 
-Version numbers are diagnostic only. Compatibility is proven by the live
-smoke tests (`test` command): native `spawn_agent` → DeepSeek child →
-callback, plus `state_*.sqlite` thread metadata
-(`model_provider=deepseek`, correct `model`, correct `agent_role`) and a
-random challenge marker. Flash passing never implies Pro passing.
+The manager selects transport from the detected Desktop runtime. Codex 0.149
+preserves the parent provider for native children, so the Router starts a
+bounded top-level execution with session-only DeepSeek provider overrides via
+the same Desktop-bundled Codex binary. The assignment is sent through stdin;
+the API key is resolved by command auth and never enters argv. Older compatible
+versions retain native `spawn_agent` plus plaintext Hook delivery.
+
+Compatibility is proven by the live `test` command. Both paths require the
+correct provider, model, role and a random challenge marker; the Native path
+also validates callback/thread metadata. Flash passing never implies Pro
+passing.
 
 ## Known boundaries
+
+- **Codex 0.149+ cross-provider children**: `direct_codex` is a separate
+  top-level Codex execution whose result is bridged back by the Router. It is
+  not displayed as a native child in the current Desktop task and does not use
+  `spawn_agent`/wait callbacks. The Router, not Codex, bounds ordinary
+  assignments at 900 seconds and Complex Pro + REACT assignments carrying the
+  required standalone `QUALITY CLOSURE` section at 1800 seconds. A positive
+  `--delegate-timeout <seconds>` overrides the per-assignment default.
 
 - **Windows Desktop + Credential Manager command auth**: a command-backed
   HKCU lookup fails under the Desktop sandbox identity

@@ -53,6 +53,10 @@ from runtime.provider_config import (  # noqa: E402 - standalone manager bootstr
     load_router_config,
     settings_payload,
 )
+from runtime.reasoning import (  # noqa: E402 - standalone manager bootstraps package root
+    RouteContractError,
+    render_reasoning_context,
+)
 
 try:
     import fcntl
@@ -113,6 +117,8 @@ MAX_STATE_DATABASES = 32
 METADATA_WAIT_SECONDS = 5.0
 LOCK_WAIT_SECONDS = 5.0
 APP_SERVER_TIMEOUT_SECONDS = 10.0
+DIRECT_CODEX_TIMEOUT_SECONDS = 900
+COMPLEX_PRO_TIMEOUT_SECONDS = 1800
 MAX_ASSIGNMENT_CHARS = 1_000_000
 
 DESKTOP_CODEX_CANDIDATES = (
@@ -134,8 +140,16 @@ class Modality(StrEnum):
 
 class TransportMode(StrEnum):
     NATIVE = "native"
+    DIRECT_CODEX = "direct_codex"
     PLAINTEXT_HOOK = "plaintext_hook"
     LEGACY_V1 = "legacy_v1"
+
+
+def positive_integer(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def deepseek_allowed(modality: Optional[str]) -> bool:
@@ -145,7 +159,24 @@ def deepseek_allowed(modality: Optional[str]) -> bool:
     }
 
 
-def choose_transport(native_probe_ok: bool, hook_available: bool) -> TransportMode:
+def codex_requires_direct_transport(version_text: Optional[str]) -> bool:
+    """Whether this Codex version blocks cross-provider role overrides."""
+    if not version_text:
+        return False
+    match = re.search(r"\b(\d+)\.(\d+)\.(\d+)", version_text)
+    if not match:
+        return False
+    major, minor, _patch = (int(part) for part in match.groups())
+    return (major, minor) >= (0, 149)
+
+
+def choose_transport(
+    native_probe_ok: bool,
+    hook_available: bool,
+    codex_version: Optional[str] = None,
+) -> TransportMode:
+    if codex_requires_direct_transport(codex_version):
+        return TransportMode.DIRECT_CODEX
     if native_probe_ok:
         return TransportMode.NATIVE
     if hook_available:
@@ -346,6 +377,16 @@ def emit(payload: Dict[str, Any], as_json: bool) -> None:
     for key, value in payload.items():
         if key != "status":
             print(f"{key}: {value}")
+
+
+def manager_error_result(exc: ManagerError) -> Dict[str, Any]:
+    """Serialize manager errors without allowing detail keys to replace the code."""
+    details = dict(exc.details)
+    if "status" in details:
+        details["configuration_status"] = details.pop("status")
+    if "message" in details:
+        details["detail_message"] = details.pop("message")
+    return result(exc.code, message=str(exc), **details)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -2244,7 +2285,7 @@ def static_status(paths: Paths, codex_bin: Optional[str] = None) -> Dict[str, An
         },
         plugin=plugin,
         hook_trusted=trusted,
-        transport_mode=choose_transport(False, hooks_installed).value,
+        transport_mode=choose_transport(False, hooks_installed, codex_version).value,
         catalog=checks["catalog"],
         backup={"count": backup_count},
         last_test=last_test,
@@ -2685,6 +2726,187 @@ def _smoke_env(paths: Paths) -> Dict[str, str]:
     return env
 
 
+def _direct_codex_config_args(
+    config: RouterConfig, spec: AgentSpec, model: str
+) -> List[str]:
+    """Return session-only overrides for a top-level DeepSeek Codex execution."""
+    settings = [
+        f"model_provider={_toml_string(PROVIDER)}",
+        f"model={_toml_string(model)}",
+        "model_context_window=1000000",
+        f"developer_instructions={_toml_string(_AGENT_INSTRUCTIONS[spec.role].strip())}",
+        f"model_providers.{PROVIDER}.name={_toml_string('DeepSeek')}",
+        f"model_providers.{PROVIDER}.base_url={_toml_string(config.base_url)}",
+        f"model_providers.{PROVIDER}.wire_api={_toml_string(WIRE_API)}",
+    ]
+    if platform_name() == "macos" and credential_backend() == "macos-keychain":
+        settings.extend(
+            (
+                f"model_providers.{PROVIDER}.auth.command={_toml_string(sys.executable or 'python3')}",
+                f"model_providers.{PROVIDER}.auth.args={_toml_string_array([str(Path(__file__).resolve()), '_credential-get'])}",
+                f"model_providers.{PROVIDER}.auth.timeout_ms=5000",
+                f"model_providers.{PROVIDER}.auth.refresh_interval_ms=0",
+            )
+        )
+    else:
+        settings.append(f"model_providers.{PROVIDER}.env_key={_toml_string(API_KEY_ENV)}")
+    args: List[str] = []
+    for setting in settings:
+        args.extend(("-c", setting))
+    return args
+
+
+def _parse_direct_codex_events(stdout: str) -> Dict[str, Any]:
+    """Parse the stable JSONL envelope emitted by ``codex exec --json``."""
+    thread_id: Optional[str] = None
+    message: Optional[str] = None
+    usage: Dict[str, Any] = {}
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "thread.started" and isinstance(event.get("thread_id"), str):
+            thread_id = event["thread_id"]
+        elif event.get("type") == "item.completed":
+            item = event.get("item")
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "agent_message"
+                and isinstance(item.get("text"), str)
+            ):
+                message = item["text"].strip()
+        elif event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
+            usage = event["usage"]
+    return {"thread_id": thread_id, "message": message, "usage": usage}
+
+
+def direct_codex_delegate(
+    paths: Paths,
+    codex_bin: str,
+    role: str,
+    assignment: str,
+    *,
+    workspace: Optional[str] = None,
+    policy: Optional[str] = None,
+    modality: str = Modality.TEXT_ONLY,
+    timeout_seconds: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Run a bounded DeepSeek role as a top-level Codex execution.
+
+    Codex 0.149 intentionally prevents an agent role from replacing the
+    provider inherited from its parent. A top-level execution can still select
+    an explicitly configured custom provider, so the Router uses that public
+    boundary as its Desktop-compatible transport.
+    """
+    if role not in AGENT_SPECS:
+        raise ManagerError("invalid_agent_type", f"Unsupported agent type: {role}")
+    task = assignment.strip()
+    if not task:
+        raise ManagerError("invalid_assignment", "The delegated assignment is empty.")
+    if len(task) > MAX_ASSIGNMENT_CHARS:
+        raise ManagerError(
+            "assignment_too_large",
+            f"The delegated assignment exceeds {MAX_ASSIGNMENT_CHARS} characters.",
+        )
+    if not deepseek_allowed(modality):
+        raise ManagerError(
+            "vision_critical",
+            "DeepSeek delegation requires text or a parent-supplied Visual Context Packet.",
+        )
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise ManagerError(
+            "invalid_delegate_timeout", "Delegate timeout must be a positive integer."
+        )
+    resolved_policy = policy or ("FAST" if role == FLASH_ROLE else "REACT")
+    try:
+        reasoning = render_reasoning_context(role, resolved_policy)
+    except RouteContractError as exc:
+        raise ManagerError("invalid_policy", str(exc)) from exc
+
+    resolved_timeout_seconds = (
+        timeout_seconds
+        if timeout_seconds is not None
+        else (
+            COMPLEX_PRO_TIMEOUT_SECONDS
+            if role == PRO_ROLE
+            and resolved_policy == "REACT"
+            and re.search(r"(?m)^QUALITY CLOSURE\s*$", task)
+            else DIRECT_CODEX_TIMEOUT_SECONDS
+        )
+    )
+
+    target_workspace = Path(workspace or os.getcwd()).expanduser().resolve()
+    if not target_workspace.is_dir():
+        raise ManagerError(
+            "workspace_missing", f"Delegation workspace is not a directory: {target_workspace}"
+        )
+    config = resolve_router_config(paths)
+    spec = AGENT_SPECS[role]
+    model = config.flash_model if role == FLASH_ROLE else config.pro_model
+    prompt = (
+        "BEGIN PARENT ASSIGNMENT\n"
+        f"{task}\n"
+        "END PARENT ASSIGNMENT\n\n"
+        f"{reasoning}"
+    )
+    command = [
+        codex_bin,
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--json",
+        "-s",
+        spec.sandbox_mode,
+        "-C",
+        str(target_workspace),
+        *_direct_codex_config_args(config, spec, model),
+        "-",
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            input=prompt,
+            env=_smoke_env(paths),
+            timeout=resolved_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ManagerError(
+            "delegate_timeout",
+            f"Direct Codex delegation for {role} timed out after {resolved_timeout_seconds} seconds.",
+            {"timeout_seconds": resolved_timeout_seconds},
+        ) from exc
+    if proc.returncode != 0:
+        raise ManagerError(
+            "delegate_failed",
+            f"Direct Codex delegation for {role} failed.",
+            {"stderr": proc.stderr[-2000:]},
+        )
+    evidence = _parse_direct_codex_events(proc.stdout)
+    if not evidence["message"]:
+        raise ManagerError(
+            "invalid_response",
+            f"Direct Codex delegation for {role} returned no final agent message.",
+            {"stderr": proc.stderr[-2000:]},
+        )
+    return result(
+        "completed",
+        transport_mode="direct_codex",
+        role=role,
+        model=model,
+        model_provider=PROVIDER,
+        agent_role=role,
+        thread_id=evidence["thread_id"],
+        message=evidence["message"],
+        usage=evidence["usage"],
+        timeout_seconds=resolved_timeout_seconds,
+    )
+
+
 def _stage_command(paths: Paths, role: str, expected_line: str) -> str:
     """The parent runs this exact command with the Bash tool before spawning."""
     if platform_name() == "windows":
@@ -2906,31 +3128,70 @@ def native_spawn_smoke(paths: Paths, codex_bin: str, role: str, model: str) -> D
     }
 
 
+def direct_codex_smoke(
+    paths: Paths, codex_bin: str, role: str, model: str
+) -> Dict[str, Any]:
+    """Prove a top-level DeepSeek Codex execution returns the expected marker."""
+    marker = uuid.uuid4().hex
+    expected_line = f"DIRECT_{role.upper()}_OK {marker}"
+    delegated = direct_codex_delegate(
+        paths,
+        codex_bin,
+        role,
+        f"Compute 17*23 and reply exactly this line: {expected_line} 391",
+        workspace=str(paths.codex_home),
+        policy="FAST" if role == FLASH_ROLE else "REACT",
+    )
+    message = delegated["message"]
+    if expected_line not in message or "391" not in message:
+        raise ManagerError(
+            "direct_route_mismatch",
+            f"Direct Codex routing evidence for {role} does not match the expected marker.",
+            {"message": message, "expected_line": expected_line},
+        )
+    return {
+        "role": role,
+        "model": model,
+        "model_provider": PROVIDER,
+        "agent_role": role,
+        "transport_mode": TransportMode.DIRECT_CODEX.value,
+        "marker_verified": True,
+        "thread_id": delegated["thread_id"],
+    }
+
+
 def run_tests(paths: Paths, codex_bin: str) -> Dict[str, Any]:
     status = static_status(paths, codex_bin)
     if status["status"] not in {"configured", "ready"}:
         raise ManagerError("not_configured", "Static configuration is incomplete; live tests cannot run.", status)
-    if not plugin_hook_available(paths):
-        raise ManagerError("plugin_hook_missing", "The Plugin Hook is not available; install or reload the Plugin before native smoke tests.")
-    if not hook_trusted(paths, codex_bin):
-        raise ManagerError(
-            "hook_untrusted",
-            "The Plugin Hook has not been reviewed yet. Codex normally shows its review UI; use /hooks in the interactive CLI only as a fallback, then run test again.",
-        )
+    transport = TransportMode(status["transport_mode"])
+    if transport != TransportMode.DIRECT_CODEX:
+        if not plugin_hook_available(paths):
+            raise ManagerError("plugin_hook_missing", "The Plugin Hook is not available; install or reload the Plugin before native smoke tests.")
+        if not hook_trusted(paths, codex_bin):
+            raise ManagerError(
+                "hook_untrusted",
+                "The Plugin Hook has not been reviewed yet. Codex normally shows its review UI; use /hooks in the interactive CLI only as a fallback, then run test again.",
+            )
     config = resolve_router_config(paths)
     results: Dict[str, Any] = {}
     models = {FLASH_ROLE: config.flash_model, PRO_ROLE: config.pro_model}
     for role, model in models.items():
-        results[role] = native_spawn_smoke(paths, codex_bin, role, model)
+        if transport == TransportMode.DIRECT_CODEX:
+            results[role] = direct_codex_smoke(paths, codex_bin, role, model)
+        else:
+            results[role] = native_spawn_smoke(paths, codex_bin, role, model)
     manifest = read_manifest(paths)
     manifest["last_test"] = {
         "ran_at": datetime.now().isoformat(timespec="seconds"),
+        "transport_mode": transport.value,
         "flash": results[FLASH_ROLE],
         "pro": results[PRO_ROLE],
     }
     write_manifest(paths, manifest)
     return result(
         "ready",
+        transport_mode=transport.value,
         flash=results[FLASH_ROLE],
         pro=results[PRO_ROLE],
         new_task_required=True,
@@ -2947,7 +3208,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("status", "setup", "test", "repair", "migrate", "disable", "uninstall", "doctor"),
+        choices=(
+            "status",
+            "setup",
+            "test",
+            "repair",
+            "migrate",
+            "disable",
+            "uninstall",
+            "doctor",
+            "delegate",
+        ),
     )
     parser.add_argument("--codex-home")
     parser.add_argument("--api-key-stdin", action="store_true")
@@ -2955,6 +3226,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url")
     parser.add_argument("--flash-model")
     parser.add_argument("--pro-model")
+    parser.add_argument("--agent-type", choices=sorted(VALID_AGENTS))
+    parser.add_argument("--policy", choices=POLICIES)
+    parser.add_argument("--modality", choices=tuple(Modality), default=Modality.TEXT_ONLY)
+    parser.add_argument("--workspace")
+    parser.add_argument(
+        "--delegate-timeout",
+        type=positive_integer,
+        help="Positive timeout override in seconds for delegate; defaults to 900 or 1800 for Complex Pro + REACT.",
+    )
     parser.add_argument("--remove-credential", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser
@@ -2984,8 +3264,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "invalid_configuration",
                 "--base-url, --flash-model and --pro-model are only valid with setup.",
             )
+        if args.command != "delegate" and args.delegate_timeout is not None:
+            raise ManagerError(
+                "invalid_configuration",
+                "--delegate-timeout is only valid with delegate.",
+            )
         codex_bin: Optional[str] = None
-        if args.command in {"status", "setup", "repair", "test", "doctor"}:
+        if args.command in {"status", "setup", "repair", "test", "doctor", "delegate"}:
             try:
                 codex_bin = find_desktop_codex()
             except ManagerError as exc:
@@ -2996,6 +3281,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             payload = static_status(paths, codex_bin)
         elif args.command == "doctor":
             payload = doctor(paths, codex_bin)
+        elif args.command == "delegate":
+            if not args.agent_type:
+                raise ManagerError(
+                    "invalid_agent_type", "delegate requires --agent-type."
+                )
+            assignment = sys.stdin.read(MAX_ASSIGNMENT_CHARS + 1)
+            payload = direct_codex_delegate(
+                paths,
+                codex_bin or "",
+                args.agent_type,
+                assignment,
+                workspace=args.workspace,
+                policy=args.policy,
+                modality=args.modality,
+                timeout_seconds=args.delegate_timeout,
+            )
         else:
             with operation_lock(paths):
                 if args.command == "setup":
@@ -3021,7 +3322,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         emit(payload, args.json)
         return 0 if payload["status"] not in {"partial", "credential_missing"} else 2
     except ManagerError as exc:
-        emit(result(exc.code, message=str(exc), **exc.details), args.json)
+        emit(manager_error_result(exc), args.json)
         return 2
     except subprocess.TimeoutExpired:
         emit(result("timeout", message="Operation timed out. No credential was printed."), args.json)

@@ -19,11 +19,11 @@
 
 | 主控不变 | 双 Agent 分工 | 结果可证明 |
 | --- | --- | --- |
-| 不修改 `config.toml`，父模型、Provider 和 ChatGPT 登录保持原样 | Flash 负责快速只读探索，Pro 负责深度推理与实现 | callback、线程数据库元数据、随机 challenge marker 三重验收 |
+| 不修改 `config.toml`，父模型、Provider 和 ChatGPT 登录保持原样 | Flash 负责快速只读探索，Pro 负责深度推理与实现 | 按实际传输验证 provider、模型、线程与随机 challenge marker |
 
-这不是 daemon、proxy、MCP Server 或第二套 Agent runtime。它是一组受管的
-Codex 原生配置：两个 Agent、一个模型目录、一个明文交接 Hook、一个运行时
-路由 Skill 和一个事务化管理器。
+这不是 daemon、proxy 或 MCP Server，也不要求另装一套 CLI。0.148 及以下兼容
+版本使用原生子 Agent；0.149 及以上使用 Desktop 内置 Codex 启动一次有边界的
+顶层 DeepSeek 执行，再由 Router 把结果交回父 Agent。
 
 ## 快速开始
 
@@ -110,10 +110,12 @@ Skill 会先检查状态。缺少凭据时，Codex 会索要 API Key，并只通
    └─ 策略路由：FAST / REACT / SPEC / DEEP
             │
             ▼
-stage → SubagentStart Hook → DeepSeek 子 Agent
+运行时检测
+   ├─ ≤0.148：stage → SubagentStart Hook → 原生 DeepSeek 子 Agent
+   └─ ≥0.149：Desktop 内置 Codex → 顶层 DeepSeek 执行（direct_codex）
             │
             ▼
-原生 callback → 元数据与 marker 验证 → Codex 整合
+provider / 模型 / 线程 / marker 验证 → Codex 整合
 ```
 
 ### 谁来做什么
@@ -140,6 +142,12 @@ REACT 子 Agent 必须满足自己能够验证的关键条件，并把父 Agent 
 对于明确标记为 Complex Pro 的实现任务，assignment 可以要求一次 bounded
 `QUALITY CLOSURE`：第一次相关功能验证通过后检查 integration、edge/failure paths
 和 regression risks，只修复 material issues 并重新验证。普通 Pro 任务仍保持快速闭环。
+
+在 Codex 0.149+ 的 `direct_codex` 路径中，这个边界也控制单次执行上限：普通
+assignment 默认 900 秒；`deepseek_pro + REACT` 且包含独立 `QUALITY CLOSURE`
+section 的 Complex Pro assignment 自动使用 1800 秒。`delegate --delegate-timeout
+<seconds>` 可以用正整数显式覆盖，返回结果中的 `timeout_seconds` 记录实际采用的
+上限。这是 Router 的安全边界，不是 Codex 自身的 15 分钟限制。
 
 这套“信息驱动收敛 + Acceptance Criteria 驱动完成”不新增第五个 Policy、
 Acceptance Profile schema 字段或 transport 状态机；普通功能任务仍保持快速收敛。

@@ -76,6 +76,29 @@ def test_acceptance_contract_does_not_add_policy_or_transport_schema():
     assert "ACCEPTANCE CRITERIA" not in REASONING
 
 
+def test_skill_dispatches_0149_through_manager_delegate():
+    for marker in (
+        "Codex 0.149 or newer",
+        "direct_codex",
+        "delegate --agent-type <role>",
+        "Desktop-bundled Codex runtime",
+        "Codex 0.148 or older",
+        'spawn_agent(agent_type="deepseek_flash|deepseek_pro", fork_turns="none")',
+    ):
+        assert marker in SKILL
+
+
+def test_complex_pro_gets_a_longer_bounded_direct_codex_timeout():
+    for marker in (
+        "ordinary assignments default to 900 seconds",
+        "Complex Pro + REACT assignments with the required `QUALITY CLOSURE` default to 1800 seconds",
+        "--delegate-timeout <seconds>",
+        "positive explicit override",
+        "timeout_seconds",
+    ):
+        assert marker in SKILL
+
+
 def test_quality_regression_cases_keep_parent_visual_ownership():
     cases = json.loads((ROOT / "eval" / "native-quality-tasks.json").read_text(encoding="utf-8"))
     assert {case["task_id"] for case in cases} == {

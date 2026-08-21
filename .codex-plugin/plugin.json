@@ -1,7 +1,7 @@
 {
   "name": "codex-deepseek-router",
-  "version": "0.3.0",
-  "description": "Use DeepSeek Flash and Pro as Codex subagents with automatic routing.",
+  "version": "0.3.2",
+  "description": "Route Codex work to DeepSeek Flash and Pro across native and Desktop-compatible transports.",
   "author": {
     "name": "codex-deepseek-router contributors",
     "url": "https://github.com/TheBlindM/codex-deepseek-router"
@@ -14,7 +14,7 @@
   "interface": {
     "displayName": "Codex DeepSeek Router",
     "shortDescription": "Route Codex work to DeepSeek Flash or Pro.",
-    "longDescription": "Keep Codex as the parent while routing bounded text work to DeepSeek Flash or Pro through native subagents and optional reviewed hooks.",
+    "longDescription": "Keep Codex as the parent while routing bounded text work to DeepSeek Flash or Pro through native subagents on compatible versions and the Desktop-bundled Codex runtime on 0.149+.",
     "developerName": "codex-deepseek-router contributors",
     "category": "Developer Tools",
     "capabilities": ["Subagents", "Hooks", "Routing"],

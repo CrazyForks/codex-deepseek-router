@@ -4,7 +4,9 @@ Lifecycle tests run against a fake codex home and never touch the real
 ~/.codex or the real system credential store.
 """
 
+import io
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -1405,6 +1407,19 @@ def test_status_on_empty_home(paths, fake_codex):
     assert status["runtime"]["codex_version"] == "codex-cli 0.148.0-test"
 
 
+def test_status_selects_direct_codex_for_0149(
+    paths, fake_codex, no_credentials, monkeypatch
+):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    monkeypatch.setattr(
+        manager, "codex_version_text", lambda codex_bin: "codex-cli 0.149.0-alpha.4"
+    )
+
+    status = manager.static_status(paths, fake_codex)
+
+    assert status["transport_mode"] == "direct_codex"
+
+
 # ---------------------------------------------------------------------------
 # live test command wiring
 # ---------------------------------------------------------------------------
@@ -1501,6 +1516,54 @@ def test_run_tests_calls_both_roles_independently(paths, fake_codex, no_credenti
     assert last_test["pro"]["model"] == "deepseek-v4-pro"
 
 
+def test_run_tests_uses_direct_codex_for_0149(
+    paths, fake_codex, no_credentials, monkeypatch
+):
+    manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
+    monkeypatch.setattr(
+        manager, "codex_version_text", lambda codex_bin: "codex-cli 0.149.0-alpha.4"
+    )
+    seen_models = []
+
+    def run(args, **kwargs):
+        model_setting = next(
+            value for value in args if value.startswith('model="deepseek-v4-')
+        )
+        seen_models.append(model_setting.removeprefix("model=").strip('"'))
+        marker = re.search(
+            r"DIRECT_DEEPSEEK_(?:FLASH|PRO)_OK [a-f0-9]+", kwargs["input"]
+        )
+        assert marker is not None
+        stdout = "\n".join(
+            (
+                json.dumps(
+                    {"type": "thread.started", "thread_id": f"direct-{len(seen_models)}"}
+                ),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": f"{marker.group(0)} 391",
+                        },
+                    }
+                ),
+                json.dumps({"type": "turn.completed", "usage": {}}),
+            )
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(manager.subprocess, "run", run)
+
+    payload = manager.run_tests(paths, fake_codex)
+
+    assert payload["status"] == "ready"
+    assert payload["transport_mode"] == "direct_codex"
+    assert seen_models == ["deepseek-v4-flash", "deepseek-v4-pro"]
+    assert payload["flash"]["marker_verified"] is True
+    assert payload["pro"]["marker_verified"] is True
+
+
 def test_run_tests_requires_hook_review(paths, fake_codex, no_credentials):
     manager.setup(paths, fake_codex, api_key_stdin=False, skip_live_test=True)
     with pytest.raises(manager.ManagerError) as exc:
@@ -1521,6 +1584,233 @@ def test_cli_status_roundtrip(tmp_home, fake_codex, monkeypatch, capsys):
     payload = json.loads(out)
     assert payload["status"] == "not_installed"
     assert "sk-" not in out
+
+
+def test_cli_test_reports_incomplete_configuration_as_json(
+    tmp_home, fake_codex, monkeypatch, capsys
+):
+    monkeypatch.setenv("CODEX_DESKTOP_BIN", fake_codex)
+
+    exit_code = manager.main(
+        ["test", "--codex-home", str(tmp_home), "--json"]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["status"] == "not_configured"
+    assert payload["configuration_status"] == "not_installed"
+
+
+def test_cli_delegate_runs_pro_with_desktop_codex(
+    tmp_home, fake_codex, monkeypatch, capsys
+):
+    monkeypatch.setenv("CODEX_DESKTOP_BIN", fake_codex)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("Return the compatibility marker."))
+
+    def run(args, **kwargs):
+        assert "--ignore-user-config" in args
+        assert "--ignore-rules" not in args
+        assert args[-1] == "-"
+        assert "Return the compatibility marker." in kwargs["input"]
+        assert 'model_provider="deepseek"' in args
+        assert 'model="deepseek-v4-pro"' in args
+        assert args[args.index("-s") + 1] == "workspace-write"
+        stdout = "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "direct-thread"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": "ROUTER_0149_DIRECT_PRO_OK",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {"input_tokens": 21, "output_tokens": 7},
+                    }
+                ),
+            )
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(manager.subprocess, "run", run)
+
+    exit_code = manager.main(
+        [
+            "delegate",
+            "--codex-home",
+            str(tmp_home),
+            "--agent-type",
+            manager.PRO_ROLE,
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload == {
+        "status": "completed",
+        "transport_mode": "direct_codex",
+        "role": "deepseek_pro",
+        "model": "deepseek-v4-pro",
+        "model_provider": "deepseek",
+        "agent_role": "deepseek_pro",
+        "thread_id": "direct-thread",
+        "message": "ROUTER_0149_DIRECT_PRO_OK",
+        "usage": {"input_tokens": 21, "output_tokens": 7},
+        "timeout_seconds": 900,
+    }
+
+
+def test_cli_delegate_gives_complex_pro_thirty_minutes(
+    tmp_home, fake_codex, monkeypatch, capsys
+):
+    monkeypatch.setenv("CODEX_DESKTOP_BIN", fake_codex)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            "OBJECTIVE\nBuild the requested artifact.\n\n"
+            "QUALITY CLOSURE\nAfter functional verification, review the diff."
+        ),
+    )
+
+    def run(args, **kwargs):
+        assert kwargs["timeout"] == 1800
+        stdout = "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "complex-thread"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": "COMPLEX_DONE"},
+                    }
+                ),
+                json.dumps({"type": "turn.completed", "usage": {}}),
+            )
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(manager.subprocess, "run", run)
+
+    exit_code = manager.main(
+        [
+            "delegate",
+            "--codex-home",
+            str(tmp_home),
+            "--agent-type",
+            manager.PRO_ROLE,
+            "--policy",
+            "REACT",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["timeout_seconds"] == 1800
+
+
+def test_cli_delegate_timeout_override_wins_over_complex_default(
+    tmp_home, fake_codex, monkeypatch, capsys
+):
+    monkeypatch.setenv("CODEX_DESKTOP_BIN", fake_codex)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO("OBJECTIVE\nBuild it.\n\nQUALITY CLOSURE\nReview once."),
+    )
+
+    def run(args, **kwargs):
+        assert kwargs["timeout"] == 2100
+        stdout = "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "override-thread"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": "OVERRIDE_DONE"},
+                    }
+                ),
+                json.dumps({"type": "turn.completed", "usage": {}}),
+            )
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(manager.subprocess, "run", run)
+
+    exit_code = manager.main(
+        [
+            "delegate",
+            "--codex-home",
+            str(tmp_home),
+            "--agent-type",
+            manager.PRO_ROLE,
+            "--policy",
+            "REACT",
+            "--delegate-timeout",
+            "2100",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["timeout_seconds"] == 2100
+
+
+def test_cli_delegate_rejects_non_positive_timeout(
+    tmp_home, fake_codex, monkeypatch, capsys
+):
+    monkeypatch.setenv("CODEX_DESKTOP_BIN", fake_codex)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("Return a marker."))
+    monkeypatch.setattr(
+        manager.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("invalid timeout reached Codex execution"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        manager.main(
+            [
+                "delegate",
+                "--codex-home",
+                str(tmp_home),
+                "--agent-type",
+                manager.PRO_ROLE,
+                "--delegate-timeout",
+                "0",
+                "--json",
+            ]
+        )
+
+    assert exc.value.code == 2
+    assert "positive integer" in capsys.readouterr().err
+
+
+def test_cli_rejects_delegate_timeout_for_non_delegate_command(
+    tmp_home, fake_codex, monkeypatch, capsys
+):
+    monkeypatch.setenv("CODEX_DESKTOP_BIN", fake_codex)
+
+    exit_code = manager.main(
+        [
+            "status",
+            "--codex-home",
+            str(tmp_home),
+            "--delegate-timeout",
+            "1200",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["status"] == "invalid_configuration"
 
 
 def test_cli_credential_helper_prints_only_the_key(monkeypatch, capsys):

@@ -1,6 +1,6 @@
 ---
 name: codex-deepseek-router
-description: Install, configure, check, test, repair, disable or uninstall the codex-deepseek-router suite — two native DeepSeek child agents (deepseek_flash on deepseek-v4-flash, deepseek_pro on deepseek-v4-pro) plus the plaintext handoff transport and the runtime routing skill. Use only when the user asks to manage this router's installation. Do not trigger for ordinary DeepSeek API questions or everyday coding tasks.
+description: Install, configure, check, test, repair, disable or uninstall the codex-deepseek-router suite — DeepSeek Flash/Pro roles, native and Desktop-compatible transports, and the runtime routing skill. Use only when the user asks to manage this router's installation. Do not trigger for ordinary DeepSeek API questions or everyday coding tasks.
 ---
 
 # Codex DeepSeek Router
@@ -20,8 +20,9 @@ machine-readable inputs to translate, not as a reason to switch languages.
 
 ## Key contracts
 
-- Codex stays the parent agent. The parent model and provider are never
-  changed; the DeepSeek provider lives inside the two agent TOMLs only.
+- Codex stays the parent agent. The parent model, provider and persisted
+  `config.toml` are never changed. Native roles carry their provider locally;
+  `direct_codex` applies it only to the delegated top-level execution.
 - Both agents are installed simultaneously:
   `deepseek_flash` → `deepseek-v4-flash` (fast worker) and
   `deepseek_pro` → `deepseek-v4-pro` (deep solver). There is no Flash/Pro
@@ -31,13 +32,13 @@ machine-readable inputs to translate, not as a reason to switch languages.
 - Task delivery uses the Plugin-owned plaintext `SubagentStart` hook. Codex
   owns discovery, review and trust; the installer never writes global Hook
   configuration or forges trust.
-- Everyday delegation is a single native call:
-  `spawn_agent(agent_type="deepseek_flash" | "deepseek_pro", fork_turns="none")`
-  after staging the assignment with the handoff script. Do not use the
-  manager script or `codex exec` to carry out user tasks.
-- If the current tool schema does not know the DeepSeek roles, tell the user
-  to open a new task or restart Codex; do not fall back to another role,
-  script, or `codex exec` for the current task.
+- Everyday delegation follows `status.transport_mode`. Codex 0.149+ uses the
+  manager's `delegate` command and the Desktop-bundled Codex runtime;
+  compatible older versions stage once and call
+  `spawn_agent(agent_type="deepseek_flash" | "deepseek_pro", fork_turns="none")`.
+- Never silently substitute another model or role. A transport change may
+  preserve the requested DeepSeek role, but its result must identify the
+  actual transport explicitly.
 
 ## After triggering
 
@@ -48,12 +49,11 @@ machine-readable inputs to translate, not as a reason to switch languages.
    key, then pass it only through stdin:
    `printf '%s\n' '<key>' | python3 <skill-dir>/scripts/codex_deepseek_router.py setup --api-key-stdin --json`.
    Never echo, restate or write the key anywhere.
-3. `setup` does not run live smoke tests. Run `test --json` afterwards; it
-   verifies both agents through the desktop Codex runtime (native
-   `spawn_agent` → DeepSeek child → callback) and checks the child thread
-   metadata (`model_provider=deepseek`, correct `model`, correct
-   `agent_role`) plus a random challenge marker. Flash passing never implies
-   Pro passing — both must pass separately.
+3. `setup` does not run live smoke tests. Run `test --json` afterwards. On
+   Codex 0.149+ it verifies both roles through `direct_codex`, including the
+   provider, model, thread ID and random challenge marker. Older compatible
+   versions verify native spawn, callback and child metadata. Flash passing
+   never implies Pro passing — both must pass separately.
 4. If the result carries `hook_review_required`, tell the user to restart or
    open a new task so Codex can show the native Plugin Hook review UI. The
    interactive CLI `/hooks` command is a fallback only when that UI is absent.
@@ -76,7 +76,11 @@ python3 <skill-dir>/scripts/codex_deepseek_router.py <command> --json
 - `setup` — configure credentials, both agents and the dual-model catalog;
   Plugin Skills and Hooks are discovered by Codex and are never copied into
   global Hook configuration. Requires the API key via `--api-key-stdin` when missing.
-- `test` — live dual-agent smoke tests through the desktop Codex runtime.
+- `test` — live dual-role smoke tests through the selected Desktop runtime transport.
+- `delegate` — one bounded 0.149+ `direct_codex` execution; assignment is
+  stdin-only. Ordinary work defaults to 900 seconds and Complex Pro + REACT
+  work with the required standalone `QUALITY CLOSURE` section defaults to 1800
+  seconds; `--delegate-timeout <seconds>` is a positive explicit override.
 - `repair` — idempotently re-apply the managed configuration and refresh the
   recorded parent snapshot (use after parent model upgrades).
 - `migrate` — remove only a precisely recognized legacy global Hook.
@@ -93,8 +97,7 @@ binary.
 
 ## Statuses
 
-- `ready` — both live smokes passed (native spawn, callback, metadata,
-  markers).
+- `ready` — both live smokes passed for the reported transport and markers.
 - `configured` — static configuration complete; live tests not run yet.
 - `partial` / `not_installed` — read `errors` and the structured checks.
 - `disabled` — routing hook removed; `repair` restores it.

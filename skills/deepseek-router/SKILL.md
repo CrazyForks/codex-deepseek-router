@@ -6,8 +6,8 @@ description: Configure, diagnose, test, repair, migrate or uninstall the codex-d
 # Codex DeepSeek Router Management
 
 The plugin owns Skill and Hook discovery. This management skill configures
-credentials, the two native Agent TOMLs and their model catalog; it never
-writes Hook configuration or trust state.
+credentials, the two Agent TOMLs and their model catalog, then selects the
+supported runtime transport; it never writes Hook configuration or trust state.
 
 ## Workflow
 
@@ -20,7 +20,9 @@ writes Hook configuration or trust state.
 4. Restart Codex or open a new task so Plugin Skills, Agents and Hooks are
    rediscovered. Codex normally presents its native Hook review UI. Use the
    interactive CLI `/hooks` command only when that prompt does not appear.
-5. Run `test --json` to verify Flash and Pro independently.
+5. Run `test --json` to verify Flash and Pro independently. Codex 0.149+
+   reports `direct_codex`; older compatible versions use the plaintext Native
+   handoff. Desktop-only installations use the bundled Codex runtime.
 
 ## Contracts
 
@@ -40,6 +42,11 @@ writes Hook configuration or trust state.
 - `setup`: configure credentials, Agents and the model catalog.
 - `doctor`: diagnose Plugin, credentials, Agents, connectivity and legacy state.
 - `test`: verify Flash and Pro separately.
+- `delegate`: execute one bounded Flash/Pro assignment through the
+  Desktop-compatible `direct_codex` transport, with the assignment on stdin.
+  Ordinary assignments default to 900 seconds; Complex Pro + REACT assignments
+  carrying the required standalone `QUALITY CLOSURE` section default to 1800
+  seconds. `--delegate-timeout <seconds>` is a positive explicit override.
 - `repair`: idempotently refresh managed non-Hook assets.
 - `migrate`: precisely remove a recognized legacy global Hook.
 - `uninstall`: remove manager-owned non-Plugin state; preserve credentials by

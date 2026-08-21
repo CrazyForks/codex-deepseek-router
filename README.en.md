@@ -13,19 +13,20 @@
 </p>
 
 > Codex always remains the parent agent. It selects `deepseek_flash` or
-> `deepseek_pro` by task, delegates through native `spawn_agent`, then verifies
-> and integrates the result itself.
+> `deepseek_pro`, uses native children on compatible older versions or the
+> Desktop-bundled `direct_codex` transport on 0.149+, then verifies and
+> integrates the result itself.
 
 ## The outcome first
 
 | Parent stays intact | Two specialized agents | Evidence, not self-report |
 | --- | --- | --- |
-| Never touches `config.toml`; the parent model, provider, and ChatGPT login stay unchanged | Flash handles fast read-only exploration; Pro handles deep reasoning and implementation | Native callback, thread-database metadata, and a random challenge marker must all agree |
+| Never touches `config.toml`; the parent model, provider, and ChatGPT login stay unchanged | Flash handles fast read-only exploration; Pro handles deep reasoning and implementation | Provider, model, thread, and random challenge evidence must match the selected transport |
 
-This is not a daemon, proxy, MCP server, or second agent runtime. It is a
-managed set of native Codex configuration: two agents, one model catalog, one
-plaintext handoff hook, one runtime routing skill, and one transactional
-manager.
+This is not a daemon, proxy, or MCP server, and it does not require a separate
+CLI installation. Compatible versions through 0.148 use native children;
+0.149+ uses the Desktop-bundled Codex binary for one bounded top-level
+DeepSeek execution and bridges the result back to the parent.
 
 ## Quick start
 
@@ -119,10 +120,12 @@ User task
    └─ Policy router: FAST / REACT / SPEC / DEEP
             │
             ▼
-stage → SubagentStart hook → DeepSeek child
+runtime detection
+   ├─ ≤0.148: stage → SubagentStart hook → native DeepSeek child
+   └─ ≥0.149: Desktop-bundled Codex → top-level DeepSeek (`direct_codex`)
             │
             ▼
-native callback → metadata + marker verification → Codex integration
+provider + model + thread + marker verification → Codex integration
 ```
 
 ### Who does what
@@ -154,6 +157,14 @@ bounded `QUALITY CLOSURE`: after the first relevant functional verification
 passes, inspect integration, edge/failure paths, and regression risks, fix only
 material issues, and rerun the affected verification. Ordinary Pro work remains
 fast and does not inherit this requirement.
+
+On the Codex 0.149+ `direct_codex` path, this boundary also selects the per-run
+limit: ordinary assignments default to 900 seconds, while a
+`deepseek_pro + REACT` assignment containing a standalone `QUALITY CLOSURE`
+section automatically receives 1800 seconds. A positive
+`delegate --delegate-timeout <seconds>` value explicitly overrides that choice,
+and the returned `timeout_seconds` records the effective limit. This is a Router
+safety bound, not an inherent 15-minute Codex limit.
 
 This information-driven, acceptance-criteria-driven completion adds no fifth
 policy, acceptance-profile schema field, or transport state machine; ordinary

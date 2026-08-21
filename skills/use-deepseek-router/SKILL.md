@@ -221,13 +221,31 @@ parent's semantic decision.
    exclusions, permissions, output contract, acceptance criteria,
    verification owner, stopping condition).
 7. Add the Visual Context Packet if needed.
-8. Stage the complete assignment through the installed handoff script in
-   `stage` mode, then spawn with the exact agent type and
-   `fork_turns="none"`:
-   - stage: `python3 <codex-home>/hooks/codex-deepseek-router/plaintext_handoff.py --mode stage --agent-type <role> --policy <POLICY> --modality <MODALITY> --state-directory <codex-home>/deepseek-router/handoff` with the assignment on stdin. This is only a local staging helper; the SubagentStart Hook is supplied by the Plugin.
-   - spawn: `spawn_agent(agent_type="deepseek_flash|deepseek_pro", fork_turns="none")`
-9. Receive the child through Codex's native wait/callback path. Do not
-   short-poll or re-run the child work while it runs.
+8. Read the Router status and follow its reported `transport_mode`. The
+   manager automatically discovers the Desktop-bundled Codex runtime, so a
+   separately installed `codex` command is not required.
+   - **Codex 0.149 or newer — `direct_codex`:** invoke
+     `python3 <plugin-root>/scripts/codex_deepseek_router.py delegate --agent-type <role> --policy <POLICY> --modality <MODALITY> --workspace <workspace> --json`
+     with the complete assignment on stdin. Never interpolate assignment text
+     into the command line. On this transport, ordinary assignments default to 900 seconds;
+     Complex Pro + REACT assignments with the required `QUALITY CLOSURE` default to 1800 seconds.
+     The Manager recognizes that exact assignment section automatically. Use
+     `--delegate-timeout <seconds>` only as a positive explicit override for a
+     task-specific bound. Require `status=completed`,
+     `transport_mode=direct_codex`, the requested role/model, and a non-empty
+     `message`; record the returned `timeout_seconds`. Do not call `spawn_agent`
+     on this path: Codex 0.149 preserves
+     the ChatGPT parent's provider for native children, while the delegated
+     top-level Codex execution can select the configured DeepSeek provider.
+   - **Codex 0.148 or older — plaintext Native handoff:** stage the complete
+     assignment with
+     `python3 <codex-home>/hooks/codex-deepseek-router/plaintext_handoff.py --mode stage --agent-type <role> --policy <POLICY> --modality <MODALITY> --state-directory <codex-home>/deepseek-router/handoff`
+     using stdin, then call
+     `spawn_agent(agent_type="deepseek_flash|deepseek_pro", fork_turns="none")`.
+     The SubagentStart Hook is supplied by the Plugin.
+9. For the Native path, receive the child through Codex's wait/callback path.
+   For `direct_codex`, consume the Manager's returned `message`. Do not
+   short-poll or re-run the delegated work while it runs.
 10. Validate the returned contribution in proportion to the claim.
 11. Integrate the final answer in the parent.
 
